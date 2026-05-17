@@ -1,0 +1,17 @@
+name: "Campus Scavenger Hunt"
+description: "A fun hunt around the main campus buildings."
+items:
+  - name: "Main Library Clock"
+    description: "The clock face overlooking the quad."
+    points: 100
+    location:
+      lat: 34.0522
+      lon: -118.2437
+    radius_meters: 50
+  - name: "Old Science Fountain"
+    description: "The historic fountain in the science courtyard."
+    points: 200
+    location:
+      lat: 34.0530
+      lon: -118.2440
+    radius_meters: 30

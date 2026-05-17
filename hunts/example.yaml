@@ -1,0 +1,18 @@
+# Scavenger Hunt Configuration Example
+name: "Fall Campus Hunt"
+description: "Find hidden items around campus"
+items:
+  - name: "Library Clock"
+    description: "The big clock in the main library"
+    points: 100
+    location:
+      lat: 40.7128
+      lon: -74.0060
+    radius_meters: 50
+  - name: "Secret Fountain"
+    description: "Hidden behind the science building"
+    points: 150
+    location:
+      lat: 40.7135
+      lon: -74.0070
+    radius_meters: 30

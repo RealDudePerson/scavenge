@@ -1,0 +1,15 @@
+{
+  "name": "scavenge",
+  "version": "0.1.0",
+  "description": "Scavenger hunt application",
+  "dependencies": {
+    "fastapi": "^0.115.0",
+    "uvicorn": "^0.30.0",
+    "sqlalchemy": "^2.0.0",
+    "aiosqlite": "^0.20.0",
+    "pyyaml": "^6.0.0",
+    "pillow": "^10.0.0",
+    "python-multipart": "^0.0.9",
+    "jinja2": "^3.1.0"
+  }
+}
