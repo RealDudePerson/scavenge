@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Scavenge{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" rel="anonymous">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/foundation-sites@6.9.0/dist/css/foundation.min.css">
+    <style>
+        :root {
+            --color-primary: {{ theme.primary|default('#FF6B9D') }};
+            --color-secondary: {{ theme.secondary|default('#FEC868') }};
+            --color-accent: {{ theme.accent|default('#7AC74F') }};
+            --color-bg: {{ theme.background|default('#FFF8F0') }};
+            --color-surface: {{ theme.surface|default('#FFFFFF') }};
+            --color-text: {{ theme.text|default('#2D3142') }};
+            --color-muted: {{ theme.text_muted|default('#6C757D') }};
+            --color-success: {{ theme.success|default('#06A77D') }};
+            --color-warning: {{ theme.warning|default('#E63946') }};
+            --color-info: {{ theme.info|default('#4A90E2') }};
+        }
+        html, body { background-color: var(--color-bg); color: var(--color-text); }
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        h1, h2, h3, h4, h5, h6, .display { font-family: 'Fredoka', sans-serif; font-weight: 600; letter-spacing: -0.01em; }
+        .toast { position: fixed; top: 20px; right: 20px; z-index: 1000; min-width: 250px; }
+        .toast-item { margin-bottom: 10px; }
+        /* Top bar — outer container owns the visual treatment */
+        .top-bar {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)) !important;
+            border-radius: 0 0 12px 12px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            margin-bottom: 24px;
+        }
+        /* Inner containers share the gradient fill but no extra decoration */
+        .top-bar-left,
+        .top-bar-right,
+        .top-bar ul.menu {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)) !important;
+        }
+        .title-bar {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)) !important;
+        }
+        .top-bar a, .menu-text {
+            color: #fff !important;
+            font-weight: 500;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+        .menu-text { font-weight: 600; }
+        a { color: var(--color-primary); }
+        a:hover { color: var(--color-primary); opacity: 0.8; }
+        .button { border-radius: 8px; font-weight: 500; }
+        .button.primary { background: var(--color-primary); }
+        .button.success { background: var(--color-success); }
+        .button.alert { background: var(--color-warning); }
+        .button.warning { background: var(--color-secondary); color: var(--color-text); }
+        .button.hollow { background: transparent; color: var(--color-primary); border: 2px solid var(--color-primary); }
+        .card { background: var(--color-surface); border: none; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: transform 0.2s, box-shadow 0.2s; overflow: hidden; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
+        .card-section { padding: 1.25rem; }
+        .badge { border-radius: 6px; font-weight: 500; padding: 0.35em 0.65em; }
+        .badge.success { background: var(--color-success); color: #fff; }
+        .badge.alert { background: var(--color-warning); color: #fff; }
+        .badge.warning { background: var(--color-secondary); color: var(--color-text); }
+        .badge.primary { background: var(--color-primary); color: #fff; }
+        .progress { background: #e9ecef; border-radius: 999px; height: 1rem; overflow: hidden; }
+        .progress-meter { background: linear-gradient(90deg, var(--color-primary), var(--color-secondary)); border-radius: 999px; }
+        .callout { border-radius: 10px; border: none; }
+        .callout.primary { background: linear-gradient(135deg, rgba(255,107,157,0.12), rgba(254,200,104,0.12)); }
+        @media screen and (max-width: 639px) {
+            .top-bar .top-bar-left,
+            .top-bar .top-bar-right { width: 100%; }
+            .top-bar ul.menu { flex-wrap: wrap; }
+            .top-bar .menu-text { width: 100%; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+            .top-bar li { margin-bottom: 0.25rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="title-bar" data-responsive-toggle="main-menu" data-hide-for="medium">
+        <button class="menu-icon" type="button" data-toggle></button>
+        <div class="title-bar-title">Scavenger Hunt</div>
+    </div>
+
+    <div class="top-bar" id="main-menu">
+        <div class="top-bar-left">
+            <ul class="menu">
+                <li class="menu-text">Scavenger Hunt</li>
+                {% if is_admin %}
+                    <li><a href="/admin/dashboard">Admin</a></li>
+                {% elif is_team_member %}
+                    <li><a href="/hunt/dashboard">Dashboard</a></li>
+                    <li><a href="/gallery">Gallery</a></li>
+                    <li><a href="/leaderboard">Leaderboard</a></li>
+                {% endif %}
+            </ul>
+        </div>
+        <div class="top-bar-right">
+            <ul class="menu">
+                {% if is_admin or is_team_member %}
+                    <li><a href="/logout">Logout</a></li>
+                {% else %}
+                    <li><a href="/">Hunt Login</a></li>
+                    <li><a href="/admin/login">Admin</a></li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast"></div>
+    <div class="grid-container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/foundation-sites@6.9.0/dist/js/foundation.min.js"></script>
+    <script>
+        $(document).foundation();
+
+        function showToast(message, type = 'primary') {
+            const toast = $('<div class="callout ' + type + ' toast-item" data-closable></div>').text(message);
+            $('#toast-container').append(toast);
+            setTimeout(() => toast.fadeOut(500, () => toast.remove()), 3000);
+        }
+
+        $(document).on('submit', 'form', function(e) {
+            e.preventDefault();
+            const form = $(this);
+            const formData = new FormData(form[0]);
+            
+            fetch(form.attr('action'), {
+                method: form.attr('method'),
+                body: formData
+            })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(err => { throw new Error(err.detail || 'Request failed') });
+                }
+                return res.json();
+            })
+            .then(data => {
+                showToast(data.message || 'Success!', 'success');
+                if (data.redirect) window.location.href = data.redirect;
+            })
+            .catch(err => {
+                showToast(err.message || 'Action failed', 'alert');
+                console.error(err);
+            });
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

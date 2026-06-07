@@ -1,14 +1,15 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Admin Login</title>
-</head>
-<body>
-    <h1>Admin Login</h1>
-    <form action="/admin/login" method="post">
-        <input type="password" name="password" placeholder="Password" required>
-        <button type="submit">Login</button>
-    </form>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Admin Login{% endblock %}
+
+{% block content %}
+<div class="grid-x grid-padding-x align-center">
+    <div class="cell medium-6">
+        <h1>Admin Login</h1>
+        <form action="/admin/login" method="post">
+            <input type="password" name="password" placeholder="Password" required>
+            <button type="submit" class="button expanded">Login</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

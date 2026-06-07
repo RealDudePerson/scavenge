@@ -1,0 +1,124 @@
+name: "Backyard Summer Scavenger Hunt"
+description: "Find fun summer items hiding in your own backyard!"
+theme:
+  primary: "#FF6B9D"
+  secondary: "#FEC868"
+  accent: "#7AC74F"
+  background: "#FFF8F0"
+  surface: "#FFFFFF"
+  text: "#2D3142"
+  text_muted: "#6C757D"
+  success: "#06A77D"
+  warning: "#E63946"
+  info: "#4A90E2"
+items:
+  - name: "A Red Flower in Bloom"
+    description: "A flower that has fully opened and shows its bright red petals."
+    points: 50
+    bonus_points: 25
+    bonus_hint: "Try for a sharp close-up, and don't move on too quickly — the garden's busiest visitors might drop by."
+    required_properties:
+      - "shows a real red flower in bloom"
+      - "taken outdoors in a backyard setting"
+    bonus_properties:
+      - "flower is in sharp focus"
+      - "a bee or butterfly is visible on or near the flower"
+  - name: "A Butterfly or Bee"
+    description: "One of summer's hardest-working visitors, buzzing through the garden."
+    points: 75
+    bonus_points: 25
+    bonus_hint: "Patience pays off — get close enough to see the wing details, and try to capture one in motion if you can."
+    required_properties:
+      - "shows a real butterfly or bee"
+      - "taken outdoors"
+    bonus_properties:
+      - "the insect is in flight or clearly visible"
+      - "good close-up detail on the wings or body"
+  - name: "A Backyard Bird"
+    description: "A bird perched, flying, or pecking around the yard."
+    points: 100
+    bonus_points: 50
+    bonus_hint: "A clear, focused shot of the bird doing its thing (perched, eating, or in flight) earns the most."
+    required_properties:
+      - "shows a real bird"
+      - "the bird is in a backyard or garden setting"
+    bonus_properties:
+      - "the bird is in sharp focus"
+      - "the bird is doing something interesting (perched, flying, eating)"
+  - name: "Something You Grew"
+    description: "A fruit, vegetable, or herb from the garden that you (or someone) planted."
+    points: 100
+    bonus_points: 50
+    bonus_hint: "A hand picking or holding the produce shows off the harvest. Ripe, ready-to-eat picks score extra."
+    required_properties:
+      - "shows a fruit, vegetable, or herb"
+      - "it appears to be growing on a plant or recently picked"
+    bonus_properties:
+      - "the produce is ripe and ready to eat"
+      - "a hand is shown holding or picking the produce"
+  - name: "A Summer Drink"
+    description: "A cold drink to cool off — lemonade, iced tea, a smoothie, anything refreshing."
+    points: 50
+    bonus_points: 25
+    bonus_hint: "A frosty glass with condensation is the classic summer drink shot. A garnish or straw adds the extra touch."
+    required_properties:
+      - "shows a real drink in a cup or glass"
+      - "taken outdoors in a backyard"
+    bonus_properties:
+      - "ice or condensation is visible on the glass"
+      - "a straw, fruit garnish, or umbrella is visible"
+  - name: "Shadows and Sunlight"
+    description: "A photo showing the contrast between bright sunlight and cool shadow."
+    points: 75
+    bonus_points: 50
+    bonus_hint: "Look for a recognizable shadow shape — a person, tree, or object. Composition is the secret to top marks here."
+    required_properties:
+      - "shows clear contrast between sunlit and shaded areas"
+      - "taken outdoors during daytime"
+    bonus_properties:
+      - "an interesting shadow shape is visible (person, tree, object)"
+      - "the composition is creative or artistic"
+  - name: "Water Play"
+    description: "A sprinkler, hose, pool, water gun, or any summer water fun."
+    points: 100
+    bonus_points: 50
+    bonus_hint: "Frozen droplets or splashes mid-air are the gold standard. Bonus points if a person is clearly having fun."
+    required_properties:
+      - "shows water being used for play or cooling off"
+      - "taken outdoors in a backyard"
+    bonus_properties:
+      - "a person is visible enjoying the water"
+      - "water droplets or splashes are frozen mid-air"
+  - name: "A Cozy Backyard Seat"
+    description: "A chair, hammock, blanket, or spot where someone might relax and enjoy the day."
+    points: 50
+    bonus_points: 25
+    bonus_hint: "Show someone actually enjoying the spot — a book, drink, or cozy detail makes the scene come alive."
+    required_properties:
+      - "shows outdoor seating or a relaxation spot"
+      - "taken in a backyard setting"
+    bonus_properties:
+      - "a person is sitting or relaxing in the spot"
+      - "a book, drink, or other comfort item is visible"
+  - name: "Something That Floats"
+    description: "A leaf, toy boat, feather, or anything floating on water."
+    points: 75
+    bonus_points: 50
+    bonus_hint: "Reflections and ripples add a magical quality. Pick something a little unexpected for the best shot."
+    required_properties:
+      - "shows an object floating on water"
+      - "the water is in a backyard setting (pool, pond, kiddie pool)"
+    bonus_properties:
+      - "ripples or reflections are visible on the water"
+      - "the floating object is creative or unusual"
+  - name: "Summer Sunset or Sky"
+    description: "A beautiful sky view — sunset colors, fluffy clouds, or a rainbow."
+    points: 100
+    bonus_points: 50
+    bonus_hint: "Golden hour (right after sunrise or before sunset) gives the richest colors. Dramatic clouds are a bonus."
+    required_properties:
+      - "shows the sky as the main subject"
+      - "taken outdoors"
+    bonus_properties:
+      - "vibrant sunset or sunrise colors are visible"
+      - "interesting cloud formations are visible"

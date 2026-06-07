@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}Hunt Dashboard{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 1.5rem;">Team Dashboard</h1>
+
+{% if hunt_state.is_open %}
+<div class="callout primary" style="padding: 1.5rem;">
+    <div class="grid-x align-middle">
+        <div class="cell small-12 medium-7">
+            <h3 style="margin: 0 0 0.5rem 0;">Your Progress</h3>
+            <div class="progress" role="progressbar" style="height: 1.25rem; margin: 0.5rem 0;">
+                <div id="progress-meter" class="progress-meter" style="width: {{ progress }}%; line-height: 1.25rem; color: #fff; font-size: 0.85rem; font-weight: 600; text-align: center;">
+                    <span id="progress-text">{{ "%.1f"|format(progress) }}%</span>
+                </div>
+            </div>
+        </div>
+        <div class="cell small-12 medium-5 text-right">
+            <div class="big-number" id="countdown-display" data-seconds-remaining="{{ hunt_state.seconds_remaining }}" style="font-family: 'Fredoka', sans-serif; font-size: 3rem; font-weight: 700; line-height: 1; color: var(--color-warning);">
+                ⏱️ {{ hunt_state.ends_at_display }}
+            </div>
+            <div style="font-size: 0.85rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">time remaining</div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="callout alert" style="padding: 2rem 1.5rem; text-align: center; background: var(--color-warning); color: #fff; border: none;">
+    <div style="font-size: 3rem; margin-bottom: 0.5rem;">🔒</div>
+    <h2 style="margin: 0 0 0.5rem 0; color: #fff;">HUNT IS CLOSED</h2>
+    <p style="margin: 0; font-size: 1.05rem;">
+        {% if hunt_state.is_expired %}
+            The hunt ended on {{ hunt_state.ends_at.strftime('%B %d, %Y at %I:%M %p') }}.
+        {% else %}
+            The hunt is not currently running. Please wait for the admin to start it.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+
+<h2 style="margin-top: 2rem; margin-bottom: 1rem;">Items</h2>
+
+<div class="grid-x grid-padding-x" id="items-list">
+    {% for item in items %}
+    {% set state = item_state.get(item.id, {"attempts": 0, "locked": False, "points_awarded": 0, "has_bonus": False}) %}
+    <div class="cell medium-6" id="item-{{ item.id }}" style="margin-bottom: 1.25rem;">
+        <div class="card" style="height: 100%;">
+            <div class="card-section" style="padding-bottom: 0.5rem;">
+                <h4 style="margin: 0 0 0.5rem 0;">{{ item.name }}</h4>
+                <p style="color: var(--color-muted); font-size: 0.95rem; margin: 0;">{{ item.description }}</p>
+                {% if item.bonus_hint and not state.locked %}
+                <div class="hint-callout" style="margin-top: 0.75rem; padding: 0.6rem 0.85rem; background: rgba(254, 200, 104, 0.18); border-left: 3px solid var(--color-secondary); border-radius: 6px; font-size: 0.85rem; color: var(--color-text); display: flex; gap: 0.5rem; align-items: flex-start;">
+                    <span style="font-size: 1rem; line-height: 1.3;">💡</span>
+                    <span><strong style="color: var(--color-text);">Hint:</strong> {{ item.bonus_hint }}</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-section points-row" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: rgba(255,107,157,0.05); border-top: 1px solid rgba(0,0,0,0.05);">
+                <div class="big-points" style="text-align: center; min-width: 80px;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 2.5rem; font-weight: 700; color: var(--color-primary); line-height: 1;">{{ item.points }}</div>
+                    <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 2px;">POINTS</div>
+                </div>
+                {% if item.bonus_points > 0 %}
+                <div class="big-bonus" style="text-align: center; min-width: 80px; padding: 0.4rem 0.6rem; background: var(--color-secondary); border-radius: 8px;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 1.5rem; font-weight: 700; color: var(--color-text); line-height: 1;">+{{ item.bonus_points }}</div>
+                    <div style="font-size: 0.65rem; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 2px;">BONUS</div>
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-section" style="padding: 1rem 1.25rem;">
+                {% if state.locked %}
+                    <div class="status-badge" style="background: var(--color-success); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; text-align: center; font-weight: 600;">
+                        <div style="font-size: 1.1rem;">Locked</div>
+                        <div style="font-size: 0.85rem; opacity: 0.95;">{{ state.points_awarded }} pts earned{% if state.has_bonus %} (incl. bonus){% endif %}</div>
+                    </div>
+                {% elif state.attempts >= max_attempts %}
+                    <div class="status-badge" style="background: var(--color-warning); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; text-align: center; font-weight: 600;">
+                        <div style="font-size: 1.1rem;">Max attempts used</div>
+                        <div style="font-size: 0.85rem; opacity: 0.95;">{{ state.attempts }}/{{ max_attempts }} attempts</div>
+                    </div>
+                {% elif not hunt_state.is_open %}
+                    <div class="status-badge" style="background: var(--color-muted); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; text-align: center; font-weight: 600;">
+                        <div style="font-size: 1.1rem;">🔒 Hunt closed</div>
+                        <div style="font-size: 0.85rem; opacity: 0.95;">Submissions are not accepted right now</div>
+                    </div>
+                {% else %}
+                    <div style="font-size: 0.85rem; color: var(--color-muted); margin-bottom: 0.5rem; text-align: center;">
+                        Attempt {{ state.attempts + 1 }} of {{ max_attempts }}
+                    </div>
+                    <label class="button expanded large-button" style="margin: 0; cursor: pointer; min-height: 48px;">
+                        <span>Submit Photo</span>
+                        <input type="file" name="file" accept="image/*" style="display:none;"
+                               onchange="handleDirectUpload(this, {{ item.id }})">
+                    </label>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Upload progress overlay (full page) -->
+<div id="upload-overlay">
+    <div class="loading-spinner"></div>
+    <h3 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Analyzing your photo with AI...</h3>
+    <p style="color: var(--color-muted);">This usually takes a few seconds</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    .large-button { min-height: 48px; font-size: 1rem; padding: 0.875rem 1rem; }
+    .loading-spinner {
+        width: 64px;
+        height: 64px;
+        border: 5px solid #e0e0e0;
+        border-top-color: var(--color-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #upload-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255, 255, 255, 0.95);
+        z-index: 100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+    }
+    #upload-overlay.active {
+        display: flex;
+    }
+</style>
+<script>
+    function handleDirectUpload(input, itemId) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const teamId = {{ session.team_id }};
+        const formData = new FormData();
+        formData.append('item_id', itemId);
+        formData.append('team_id', teamId);
+        formData.append('file', file);
+
+        const overlay = document.getElementById('upload-overlay');
+        overlay.classList.add('active');
+
+        fetch('/submit', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            overlay.classList.remove('active');
+            if (data.redirect) {
+                window.location.href = data.redirect;
+            } else {
+                showToast(data.message || 'Submission failed', 'alert');
+            }
+        })
+        .catch(err => {
+            overlay.classList.remove('active');
+            showToast('Upload failed. Check your connection and try again.', 'alert');
+        });
+
+        // Reset so the same file can be re-selected after a failure
+        input.value = '';
+    }
+
+    // Live countdown ticker
+    (function() {
+        const el = document.getElementById('countdown-display');
+        if (!el) return;
+        let remaining = parseInt(el.dataset.secondsRemaining, 10);
+        if (isNaN(remaining) || remaining <= 0) return;
+
+        function fmt(s) {
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            return h > 0
+                ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+                : `${m}:${String(sec).padStart(2, '0')}`;
+        }
+
+        el.textContent = '⏱️ ' + fmt(remaining);
+        setInterval(() => {
+            remaining--;
+            if (remaining <= 0) {
+                location.reload();
+                return;
+            }
+            el.textContent = '⏱️ ' + fmt(remaining);
+        }, 1000);
+    })();
+</script>
+{% endblock %}

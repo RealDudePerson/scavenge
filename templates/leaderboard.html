@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Leaderboard{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 1.5rem;">Leaderboard</h1>
+
+{% if not leaderboard %}
+<div class="callout warning text-center" style="padding: 3rem 1.5rem;">
+    <div style="font-size: 4rem; margin-bottom: 1rem;">🏆</div>
+    <h3 style="margin: 0 0 0.5rem 0;">No scores yet</h3>
+    <p style="color: var(--color-muted); margin: 0;">Be the first team to submit a photo and claim the top spot!</p>
+</div>
+{% else %}
+<div class="grid-x grid-padding-x" id="leaderboard-list">
+    {% for team_name, points in leaderboard %}
+    {% set rank = loop.index %}
+    <div class="cell medium-6" style="margin-bottom: 1rem;">
+        <div class="card" style="overflow: visible;">
+            <div class="card-section" style="display: flex; align-items: center; padding: 1.25rem; gap: 1.25rem;">
+                <div class="rank-badge" style="flex-shrink: 0; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Fredoka', sans-serif; font-size: 1.75rem; font-weight: 700; color: #fff;
+                    {% if rank == 1 %}background: linear-gradient(135deg, #FFD700, #FFA500); box-shadow: 0 4px 12px rgba(255,165,0,0.4);
+                    {% elif rank == 2 %}background: linear-gradient(135deg, #C0C0C0, #808080);
+                    {% elif rank == 3 %}background: linear-gradient(135deg, #CD7F32, #8B4513);
+                    {% else %}background: var(--color-muted);
+                    {% endif %}">
+                    {{ rank }}
+                </div>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 1.35rem; font-weight: 600; line-height: 1.2;">{{ team_name }}</div>
+                    <div style="font-size: 0.8rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 4px;">
+                        {% if rank == 1 %}🥇 1st Place
+                        {% elif rank == 2 %}🥈 2nd Place
+                        {% elif rank == 3 %}🥉 3rd Place
+                        {% else %}{{ rank }}th Place
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="flex-shrink: 0; text-align: right;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 2.25rem; font-weight: 700; line-height: 1; color: var(--color-primary);">{{ points }}</div>
+                    <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 4px;">points</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ----- Shared Photo Gallery (only after the hunt has actually ended) ----- #}
+{% if hunt_state.is_expired %}
+<h2 style="margin-top: 3rem; margin-bottom: 1rem;">Photo Gallery — Every Team</h2>
+<p style="color: var(--color-muted); margin-bottom: 1.5rem;">
+    See how each team earned their points. Tap <strong>Why this score?</strong> on any photo to see the AI's reasoning.
+</p>
+
+{% if not gallery_entries %}
+<div class="callout secondary text-center" style="padding: 2rem;">
+    <p style="margin: 0; color: var(--color-muted);">No approved submissions were recorded for this hunt.</p>
+</div>
+{% else %}
+<div class="grid-x grid-padding-x grid-margin-y">
+    {% for entry in gallery_entries %}
+    <div class="cell medium-4 small-6" style="margin-bottom: 1.5rem;">
+        <div class="card" style="height: 100%; display: flex; flex-direction: column;">
+            <div style="position: relative; overflow: hidden; cursor: pointer;" onclick="openPhotoModal('{{ entry.display_url }}')">
+                <img src="{{ entry.thumb_url }}"
+                     alt="{{ entry.item_name }}"
+                     style="width: 100%; height: 180px; object-fit: cover; display: block;">
+                {% if entry.submission.ai_bonus_awarded > 0 %}
+                <div style="position: absolute; top: 8px; right: 8px; background: var(--color-secondary); color: var(--color-text); padding: 0.25rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">
+                    🏆 +{{ entry.submission.ai_bonus_awarded }} bonus
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-section" style="flex: 1; display: flex; flex-direction: column; padding: 1rem 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span class="badge primary">{{ entry.team_name }}</span>
+                    <span style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">{{ entry.submission.submitted_at.strftime('%b %d') }}</span>
+                </div>
+                <h5 style="margin: 0 0 0.5rem 0;">{{ entry.item_name }}</h5>
+                <div style="display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 1.75rem; font-weight: 700; line-height: 1; color: var(--color-primary);">{{ entry.submission.points_awarded }}</div>
+                    <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">points earned</div>
+                </div>
+                <button type="button" class="button hollow small expanded" style="margin: 0;"
+                        onclick="toggleWhy('why-{{ entry.submission.id }}', this)">
+                    Why this score?
+                </button>
+                <div id="why-{{ entry.submission.id }}" style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(122, 199, 79, 0.08); border-left: 3px solid var(--color-accent); border-radius: 6px; font-size: 0.85rem;">
+                    {% if entry.review.get('reason') %}
+                    <p style="margin: 0 0 0.5rem 0; color: var(--color-text);">
+                        <strong>🤖 AI reasoning:</strong> {{ entry.review.get('reason') }}
+                    </p>
+                    {% else %}
+                    <p style="margin: 0 0 0.5rem 0; color: var(--color-muted); font-style: italic;">
+                        No AI reasoning recorded.
+                    </p>
+                    {% endif %}
+                    {% if entry.review.get('matched_required') %}
+                    <div style="margin-bottom: 0.25rem;">
+                        <span style="color: var(--color-success); font-weight: 600;">✓ Required:</span>
+                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_required')|join(' • ') }}</span>
+                    </div>
+                    {% endif %}
+                    {% if entry.review.get('matched_bonus') %}
+                    <div>
+                        <span style="color: var(--color-secondary); font-weight: 600;">🏆 Bonus:</span>
+                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_bonus')|join(' • ') }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+
+{% if hunt_state.is_expired %}
+<div style="text-align: center; color: var(--color-muted); margin-top: 2rem; font-size: 0.9rem;">
+    Hunt closed on {{ hunt_state.ends_at.strftime('%B %d, %Y at %I:%M %p') }}
+</div>
+{% endif %}
+
+<!-- Photo Modal -->
+<div class="reveal large" id="photoModal" data-reveal>
+    <div style="text-align: right;">
+        <button class="close-button" data-close aria-label="Close modal" type="button">
+            <span aria-hidden="true">&times;</span>
+        </button>
+    </div>
+    <img id="modal-photo" src="" style="width: 100%; border-radius: 8px;" alt="Full size photo">
+    <div style="text-align: center; margin-top: 1rem;">
+        <button class="button" data-close>Close</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function openPhotoModal(displayUrl) {
+        document.getElementById('modal-photo').src = displayUrl;
+        $('#photoModal').foundation('open');
+    }
+    function toggleWhy(id, btn) {
+        const el = document.getElementById(id);
+        if (el.style.display === 'none') {
+            el.style.display = 'block';
+            btn.textContent = 'Hide details';
+        } else {
+            el.style.display = 'none';
+            btn.textContent = 'Why this score?';
+        }
+    }
+    $(document).on('keydown', function(e) {
+        if (e.which === 27) {
+            $('#photoModal').foundation('close');
+        }
+    });
+</script>
+{% endblock %}

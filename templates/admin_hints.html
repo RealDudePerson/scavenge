@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: Bonus Hints{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 0.5rem;">Bonus Hints & AI Criteria</h1>
+<p style="color: var(--color-muted); margin-bottom: 2rem;">Internal view — what hunters see vs. what the AI uses for scoring.</p>
+
+{% if not items_with_hunts %}
+<div class="callout warning text-center">
+    <p>No items loaded yet. <a href="/admin/dashboard">Load hunts</a> first.</p>
+</div>
+{% else %}
+    {% for item, hunt_name, required_list, bonus_list in items_with_hunts %}
+<div class="card" style="margin-bottom: 1.25rem;">
+    <div class="card-section" style="padding-bottom: 0.5rem;">
+        <div style="font-size: 0.75rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.25rem;">
+            {{ hunt_name }}
+        </div>
+        <h4 style="margin: 0 0 0.25rem 0;">{{ item.name }}</h4>
+        <p style="color: var(--color-muted); font-size: 0.9rem; margin: 0 0 0.5rem 0;">{{ item.description }}</p>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+            <span class="badge primary">{{ item.points }} base</span>
+            {% if item.bonus_points > 0 %}
+            <span class="badge warning">+{{ item.bonus_points }} bonus</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-section" style="background: rgba(254, 200, 104, 0.12); padding: 1rem 1.25rem; border-top: 1px solid rgba(0,0,0,0.05);">
+        <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.5rem;">
+            💡 Public Hint (shown to hunters)
+        </div>
+        {% if item.bonus_hint %}
+        <p style="margin: 0; color: var(--color-text); font-size: 0.95rem;">{{ item.bonus_hint }}</p>
+        {% else %}
+        <p style="margin: 0; color: var(--color-muted); font-style: italic; font-size: 0.9rem;">(No hint configured for this item)</p>
+        {% endif %}
+    </div>
+    <div class="card-section" style="background: rgba(122, 199, 79, 0.08); padding: 1rem 1.25rem; border-top: 1px solid rgba(0,0,0,0.05);">
+        <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.5rem;">
+            🤖 AI Required Properties (private — used for approval)
+        </div>
+        <ul style="margin: 0 0 0.75rem 0; padding-left: 1.25rem; font-size: 0.9rem;">
+            {% for p in required_list %}
+            <li>{{ p }}</li>
+            {% else %}
+            <li style="list-style: none; color: var(--color-muted); font-style: italic;">(none)</li>
+            {% endfor %}
+        </ul>
+        <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.5rem;">
+            🏆 AI Bonus Properties (private — used for bonus points)
+        </div>
+        <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.9rem;">
+            {% for p in bonus_list %}
+            <li>{{ p }}</li>
+            {% else %}
+            <li style="list-style: none; color: var(--color-muted); font-style: italic;">(none)</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div style="margin-top: 2rem;">
+    <a href="/admin/dashboard" class="button secondary">&larr; Back to Admin</a>
+</div>
+{% endblock %}

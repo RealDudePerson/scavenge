@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Submission Result{% endblock %}
+
+{% block content %}
+<div class="grid-x grid-padding-x align-center">
+    <div class="cell medium-6">
+        <div class="callout {{ 'success' if status == 'success' else 'alert' }}">
+            <h3>{{ 'Success!' if status == 'success' else 'Submission Failed' }}</h3>
+            <p>{{ message }}</p>
+            <p><small>Redirecting in <span id="countdown">8</span> seconds...</small></p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let seconds = 8;
+    const timer = setInterval(() => {
+        document.getElementById('countdown').textContent = --seconds;
+        if (seconds <= 0) {
+            clearInterval(timer);
+            window.location.href = '/hunt/dashboard';
+        }
+    }, 1000);
+</script>
+{% endblock %}

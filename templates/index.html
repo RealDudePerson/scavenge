@@ -1,20 +1,31 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scavenger Hunt</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; text-align: center; }
-        input, button { padding: 10px; width: 100%; margin: 10px 0; }
-    </style>
-</head>
-<body>
-    <h1>Scavenger Hunt Login</h1>
-    <form action="/team/login" method="post">
-        <input type="text" name="passphrase" placeholder="Passphrase" required>
-        <button type="submit">Join Hunt</button>
-    </form>
-    <a href="/admin/login">Admin Access</a>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Scavenger Hunt Login{% endblock %}
+
+{% block content %}
+<div class="grid-x grid-padding-x align-center" style="margin-top: 3rem;">
+    <div class="cell small-12 medium-6 large-5">
+        <div class="card" style="padding: 0;">
+            <div style="background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)); padding: 2.5rem 1.5rem; text-align: center; color: #fff; border-radius: 12px 12px 0 0;">
+                <div style="font-size: 4rem; margin-bottom: 0.5rem;">🔍</div>
+                <h2 style="margin: 0; color: #fff; font-size: 2rem;">Scavenger Hunt</h2>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.95;">Enter your team's passphrase to begin</p>
+            </div>
+            <form action="/team/login" method="post" style="padding: 2rem 1.5rem;">
+                <label for="passphrase" style="font-size: 0.85rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.5rem;">Passphrase</label>
+                <input type="text" name="passphrase" id="passphrase" placeholder="e.g. alpha-secret" required style="font-size: 1.125rem; height: 3rem; margin-bottom: 1rem; border-radius: 8px;">
+                <button type="submit" class="button expanded large-button" style="min-height: 52px; font-size: 1.125rem; background: var(--color-primary);">Join Hunt</button>
+            </form>
+        </div>
+        <p class="text-center" style="margin-top: 1.5rem;">
+            <a href="/admin/login" style="font-size: 0.9rem;">Admin Access</a>
+        </p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    .large-button { min-height: 50px; }
+</style>
+{% endblock %}

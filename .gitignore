@@ -13,3 +13,7 @@ scavenge.db
 uploads/*
 !uploads/.keep
 admin_config.yaml
+
+# Editor/IDE backup files
+*.bak
+*.bak.*

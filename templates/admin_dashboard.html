@@ -1,16 +1,59 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Admin Dashboard</title>
-</head>
-<body>
-    <h1>Admin Dashboard</h1>
-    <ul>
-        <li><form action="/admin/load-hunts" method="post"><button type="submit">Load Hunts</button></form></li>
-        <li><form action="/admin/load-teams" method="post"><button type="submit">Load Teams</button></form></li>
-        <li><form action="/admin/reset" method="post"><button type="submit" style="color: red;">Reset All</button></form></li>
-    </ul>
-    <a href="/">Back to Home</a>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<h1>Admin Dashboard</h1>
+
+<!-- Hunt Timer Controls -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-section" style="padding: 1.25rem 1.5rem;">
+        <h3 style="margin: 0 0 0.75rem 0;">Hunt Timer</h3>
+        {% if hunt_state.is_open %}
+            <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                <div style="font-size: 1.1rem;">
+                    <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--color-success); margin-right: 0.5rem;"></span>
+                    <strong>Hunt is open</strong>
+                </div>
+                <div style="color: var(--color-muted); font-size: 0.95rem;">
+                    Ends at {{ hunt_state.ends_at.strftime('%I:%M %p') }}
+                    ({{ (hunt_state.seconds_remaining // 60) }} min remaining)
+                </div>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <form action="/admin/hunt/extend" method="post" style="display: inline;">
+                    <button class="button primary" type="submit">+5 Minutes</button>
+                </form>
+                <form action="/admin/hunt/stop" method="post" style="display: inline;">
+                    <button class="button alert" type="submit">Stop Hunt</button>
+                </form>
+            </div>
+        {% else %}
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; color: var(--color-muted);">
+                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--color-muted);"></span>
+                <strong>Hunt is currently closed</strong>
+                {% if hunt_state.is_expired %}
+                <span style="font-size: 0.9rem; margin-left: 0.5rem;">(last ended {{ hunt_state.ends_at.strftime('%B %d, %I:%M %p') }})</span>
+                {% endif %}
+            </div>
+            <form action="/admin/hunt/start" method="post">
+                <button class="button primary" type="submit">Start Hunt</button>
+            </form>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Hunt Management -->
+<ul class="no-bullet">
+    <li><form action="/admin/load-hunts" method="post"><button type="submit" class="button secondary">Load Hunts</button></form></li>
+    <li><form action="/admin/load-teams" method="post"><button type="submit" class="button secondary">Load Teams</button></form></li>
+    <li><a href="/admin/all-gallery" class="button primary">View All Submissions Gallery</a></li>
+    <li><a href="/admin/hints" class="button primary">View Bonus Hints & AI Criteria</a></li>
+    <li><form action="/admin/cleanup-orphans" method="post"><button type="submit" class="button warning">Clean Orphan Files</button></form></li>
+    <li><form action="/admin/reset" method="post"
+              onsubmit="return confirm('Are you sure? This will delete ALL teams, ALL submissions, and ALL uploaded photos. This cannot be undone.');">
+        <button type="submit" class="button alert">Reset All</button>
+    </form></li>
+</ul>
+<a href="/">Back to Home</a>
+{% endblock %}
