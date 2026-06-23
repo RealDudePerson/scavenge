@@ -50,40 +50,39 @@
                     {{ entry.submission.submitted_at.strftime('%b %d, %Y at %I:%M %p') }}
                 </p>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: auto;">
-                    <button type="button" class="button hollow small" style="margin: 0; flex: 1;"
-                            onclick="toggleWhy('why-{{ entry.submission.id }}', this)">
-                        Why?
-                    </button>
+                    <details style="flex: 1;">
+                        <summary class="button hollow small" style="margin: 0; cursor: pointer;">Why?</summary>
+                        <div style="margin-top: 0.5rem; padding: 0.6rem 0.75rem; background: rgba(122, 199, 79, 0.08); border-left: 3px solid var(--color-accent); border-radius: 6px; font-size: 0.8rem;">
+                            {% if entry.review.get('reason') %}
+                            <p style="margin: 0 0 0.4rem 0; color: var(--color-text);">
+                                <strong>🤖</strong> {{ entry.review.get('reason') }}
+                            </p>
+                            {% else %}
+                            <p style="margin: 0 0 0.4rem 0; color: var(--color-muted); font-style: italic;">No AI reasoning recorded.</p>
+                            {% endif %}
+                            {% if entry.review.get('matched_required') %}
+                            <div style="margin-bottom: 0.2rem;">
+                                <span style="color: var(--color-success); font-weight: 600;">✓ Req:</span>
+                                <span style="color: var(--color-muted);">{{ entry.review.get('matched_required')|join(' • ') }}</span>
+                            </div>
+                            {% endif %}
+                            {% if entry.review.get('missed_required') %}
+                            <div style="margin-bottom: 0.2rem;">
+                                <span style="color: var(--color-warning); font-weight: 600;">✗ Req missed:</span>
+                                <span style="color: var(--color-muted);">{{ entry.review.get('missed_required')|join(' • ') }}</span>
+                            </div>
+                            {% endif %}
+                            {% if entry.review.get('matched_bonus') %}
+                            <div>
+                                <span style="color: var(--color-secondary); font-weight: 600;">🏆 Bonus:</span>
+                                <span style="color: var(--color-muted);">{{ entry.review.get('matched_bonus')|join(' • ') }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </details>
                     <form action="/admin/review-submission/{{ entry.submission.id }}" method="post" style="flex: 1; display: flex;">
                         <button type="submit" class="button primary small" style="margin: 0; width: 100%;">Re-review</button>
                     </form>
-                </div>
-                <div id="why-{{ entry.submission.id }}" style="display: none; margin-top: 0.5rem; padding: 0.6rem 0.75rem; background: rgba(122, 199, 79, 0.08); border-left: 3px solid var(--color-accent); border-radius: 6px; font-size: 0.8rem;">
-                    {% if entry.review.get('reason') %}
-                    <p style="margin: 0 0 0.4rem 0; color: var(--color-text);">
-                        <strong>🤖</strong> {{ entry.review.get('reason') }}
-                    </p>
-                    {% else %}
-                    <p style="margin: 0 0 0.4rem 0; color: var(--color-muted); font-style: italic;">No AI reasoning recorded.</p>
-                    {% endif %}
-                    {% if entry.review.get('matched_required') %}
-                    <div style="margin-bottom: 0.2rem;">
-                        <span style="color: var(--color-success); font-weight: 600;">✓ Req:</span>
-                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_required')|join(' • ') }}</span>
-                    </div>
-                    {% endif %}
-                    {% if entry.review.get('missed_required') %}
-                    <div style="margin-bottom: 0.2rem;">
-                        <span style="color: var(--color-warning); font-weight: 600;">✗ Req missed:</span>
-                        <span style="color: var(--color-muted);">{{ entry.review.get('missed_required')|join(' • ') }}</span>
-                    </div>
-                    {% endif %}
-                    {% if entry.review.get('matched_bonus') %}
-                    <div>
-                        <span style="color: var(--color-secondary); font-weight: 600;">🏆 Bonus:</span>
-                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_bonus')|join(' • ') }}</span>
-                    </div>
-                    {% endif %}
                 </div>
             </div>
         </div>
@@ -115,16 +114,6 @@
     function openPhotoModal(displayUrl) {
         document.getElementById('modal-photo').src = displayUrl;
         $('#photoModal').foundation('open');
-    }
-    function toggleWhy(id, btn) {
-        const el = document.getElementById(id);
-        if (el.style.display === 'none') {
-            el.style.display = 'block';
-            btn.textContent = 'Hide';
-        } else {
-            el.style.display = 'none';
-            btn.textContent = 'Why?';
-        }
     }
     $(document).on('keydown', function(e) {
         if (e.which === 27) {

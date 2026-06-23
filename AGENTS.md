@@ -11,7 +11,7 @@ A team-based scavenger hunt site. FastAPI + SQLite + Jinja2 + Foundation CSS, wi
 ## Architecture
 
 - `app/main.py` — all routes, AI submission logic, hunt timer gates, gallery URL building
-- `app/models.py` — SQLAlchemy: `Hunt` (with 10 theme color columns), `HuntItem` (with `required_properties`/`bonus_properties`/`bonus_hint` JSON strings), `Team`, `Submission` (with AI review fields, attempt counter)
+- `app/models.py` — SQLAlchemy: `Hunt` (with `theme_json` column — JSON of 10 hex colors), `HuntItem` (with `required_properties`/`bonus_properties`/`bonus_hint` JSON strings), `Team`, `Submission` (with AI review fields, attempt counter)
 - `app/ai_review.py` — `review_image()` sends JPEG bytes to OpenAI-compatible endpoint, parses structured response
 - `app/config.py` — YAML + env config loaders: `get_admin_password`, `get_openai_config`, `get_max_photo_age_hours`, `get_hunt_state`, `set_hunt_ends_at`
 - `app/database.py` — async engine + sessionmaker

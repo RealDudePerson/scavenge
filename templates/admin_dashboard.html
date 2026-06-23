@@ -17,7 +17,7 @@
                 </div>
                 <div style="color: var(--color-muted); font-size: 0.95rem;">
                     Ends at {{ hunt_state.ends_at.strftime('%I:%M %p') }}
-                    ({{ (hunt_state.seconds_remaining // 60) }} min remaining)
+                    ({{ (hunt_state.seconds_remaining / 60)|round|int }} min remaining)
                 </div>
             </div>
             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
@@ -32,7 +32,7 @@
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; color: var(--color-muted);">
                 <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--color-muted);"></span>
                 <strong>Hunt is currently closed</strong>
-                {% if hunt_state.is_expired %}
+                {% if hunt_state.ends_at is not none %}
                 <span style="font-size: 0.9rem; margin-left: 0.5rem;">(last ended {{ hunt_state.ends_at.strftime('%B %d, %I:%M %p') }})</span>
                 {% endif %}
             </div>

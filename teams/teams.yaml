@@ -1,7 +1,5 @@
 teams:
   - name: "Team Alpha"
-    description: "The first team."
     passphrase: "alpha_secret"
   - name: "Team Beta"
-    description: "The second team."
     passphrase: "beta_secret"

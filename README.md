@@ -99,11 +99,9 @@ Edit `teams/teams.yaml`:
 ```yaml
 teams:
   - name: "Team Alpha"
-    description: "The first team."
-    passphrase: "alpha_secret"
+    passphrase: "alpha-secret"   # given to the team to log in
   - name: "Team Beta"
-    description: "The second team."
-    passphrase: "beta_secret"
+    passphrase: "beta-secret"
 ```
 
 Passphrases are shared with each team ahead of time — they're how teams log in. There's no concept of per-team accounts beyond this. Use something each team will remember but that isn't guessable.
