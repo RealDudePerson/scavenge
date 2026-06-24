@@ -1,0 +1,73 @@
+name: "Joshua Tree Desert Scavenger Hunt"
+description: "Explore the high desert and discover the unique plants, wildlife, and geology of Joshua Tree!"
+theme:
+  primary: "#D4A373"       # Desert sand / tan
+  secondary: "#E07A5F"     # Terracotta / sunset orange
+  accent: "#606C38"        # Joshua tree / creosote green
+  background: "#FEFAE0"    # Warm cream
+  surface: "#FFFFFF"       # White
+  text: "#2B2D42"          # Dark charcoal
+  text_muted: "#6C757D"    # Muted gray
+  success: "#386641"       # Deep vegetation green
+  warning: "#F28482"       # Coral pink
+  info: "#457B9D"          # Desert sky blue
+items:
+  - name: "The Iconic Joshua Tree"
+    description: "Find a mature Yucca brevifolia with its signature spiky leaves and branching arms."
+    points: 50
+    bonus_points: 25
+    bonus_hint: "Look for a tree with unique branching or one showcasing white flower clusters at the tips of its branches."
+    required_properties:
+      - "shows a real Joshua tree"
+      - "taken outdoors in a natural desert setting"
+    bonus_properties:
+      - "the tree has complex, multi-branched arms"
+      - "visible cream-white blossoms are present on the branches"
+
+  - name: "Granite Boulder Pile"
+    description: "Capture the park's famous massive, rounded monzogranite rock piles sculpted by millions of years of erosion."
+    points: 75
+    bonus_points: 50
+    bonus_hint: "Frame the shot to show scale — a person climbing or standing at the base really highlights the size of the boulders."
+    required_properties:
+      - "shows large, natural granite rock or boulder formations"
+      - "taken within Joshua Tree National Park terrain"
+    bonus_properties:
+      - "a person is visible in the frame to provide scale"
+      - "the shot captures a famous named formation such as Hidden Valley or Skull Rock"
+
+  - name: "Cholla Cactus or Desert Wildflower in Bloom"
+    description: "Find a Cholla, Beavertail, or Mojave Mound cactus with vibrant flowers, or a colorful spring wildflower."
+    points: 100
+    bonus_points: 50
+    bonus_hint: "Bright pink, yellow, or magenta blossoms pop against the spines. Capture a sharp close-up without getting too close to the needles!"
+    required_properties:
+      - "shows a real cactus or desert wildflower in bloom"
+      - "the flower or cactus is in its natural desert habitat"
+    bonus_properties:
+      - "the flower or cactus is in sharp focus with high detail"
+      - "a native pollinator such as a bee or hummingbird is near the bloom"
+
+  - name: "Sign of Desert Wildlife"
+    description: "Look for clues left behind by desert animals — bighorn sheep tracks, jackrabbit prints, a kit fox burrow, or lizard scat."
+    points: 75
+    bonus_points: 25
+    bonus_hint: "Place a small object like a coin or your hand next to a track to clearly show scale, and shoot from a low angle with the sun behind you."
+    required_properties:
+      - "shows a clear animal track, burrow, scat, or nest"
+      - "taken in a natural, undisturbed desert area"
+    bonus_properties:
+      - "the track or sign is clearly defined and identifiable"
+      - "an object or hand is included in the frame for scale reference"
+
+  - name: "Wide Desert Vista with Mountains"
+    description: "Capture the sweeping high-desert landscape from a viewpoint — distant mountain ranges, vast plains, and dramatic sky."
+    points: 75
+    bonus_points: 50
+    bonus_hint: "Keys View, Cottonwood Visitor Center, and Pinto Basin Road all offer spectacular panoramas. Golden hour light adds warm color to the scene."
+    required_properties:
+      - "shows a wide landscape view of the Mojave or Colorado desert"
+      - "mountain ranges are visible in the distance"
+    bonus_properties:
+      - "the photo is taken during golden hour with warm orange lighting"
+      - "the composition includes a Joshua tree or rock formation in the foreground"

@@ -47,8 +47,7 @@
 </div>
 {% endif %}
 
-{# ----- Shared Photo Gallery (only after the hunt has actually ended) ----- #}
-{% if hunt_state.is_expired %}
+{% if hunt_state.is_open == False and hunt_state.ends_at is not none %}
 <h2 style="margin-top: 3rem; margin-bottom: 1rem;">Photo Gallery — Every Team</h2>
 <p style="color: var(--color-muted); margin-bottom: 1.5rem;">
     See how each team earned their points. Tap <strong>Why this score?</strong> on any photo to see the AI's reasoning.
@@ -83,42 +82,39 @@
                     <div style="font-family: 'Fredoka', sans-serif; font-size: 1.75rem; font-weight: 700; line-height: 1; color: var(--color-primary);">{{ entry.submission.points_awarded }}</div>
                     <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">points earned</div>
                 </div>
-                <button type="button" class="button hollow small expanded" style="margin: 0;"
-                        onclick="toggleWhy('why-{{ entry.submission.id }}', this)">
-                    Why this score?
-                </button>
-                <div id="why-{{ entry.submission.id }}" style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(122, 199, 79, 0.08); border-left: 3px solid var(--color-accent); border-radius: 6px; font-size: 0.85rem;">
-                    {% if entry.review.get('reason') %}
-                    <p style="margin: 0 0 0.5rem 0; color: var(--color-text);">
-                        <strong>🤖 AI reasoning:</strong> {{ entry.review.get('reason') }}
-                    </p>
-                    {% else %}
-                    <p style="margin: 0 0 0.5rem 0; color: var(--color-muted); font-style: italic;">
-                        No AI reasoning recorded.
-                    </p>
-                    {% endif %}
-                    {% if entry.review.get('matched_required') %}
-                    <div style="margin-bottom: 0.25rem;">
-                        <span style="color: var(--color-success); font-weight: 600;">✓ Required:</span>
-                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_required')|join(' • ') }}</span>
+                <details style="margin-top: auto;">
+                    <summary class="button hollow small expanded" style="margin: 0; cursor: pointer;">Why this score?</summary>
+                    <div style="margin-top: 0.75rem; padding: 0.75rem; background: rgba(122, 199, 79, 0.08); border-left: 3px solid var(--color-accent); border-radius: 6px; font-size: 0.85rem;">
+                        {% if entry.review.get('reason') %}
+                        <p style="margin: 0 0 0.5rem 0; color: var(--color-text);">
+                            <strong>🤖 AI reasoning:</strong> {{ entry.review.get('reason') }}
+                        </p>
+                        {% else %}
+                        <p style="margin: 0 0 0.5rem 0; color: var(--color-muted); font-style: italic;">
+                            No AI reasoning recorded.
+                        </p>
+                        {% endif %}
+                        {% if entry.review.get('matched_required') %}
+                        <div style="margin-bottom: 0.25rem;">
+                            <span style="color: var(--color-success); font-weight: 600;">✓ Required:</span>
+                            <span style="color: var(--color-muted);">{{ entry.review.get('matched_required')|join(' • ') }}</span>
+                        </div>
+                        {% endif %}
+                        {% if entry.review.get('matched_bonus') %}
+                        <div>
+                            <span style="color: var(--color-secondary); font-weight: 600;">🏆 Bonus:</span>
+                            <span style="color: var(--color-muted);">{{ entry.review.get('matched_bonus')|join(' • ') }}</span>
+                        </div>
+                        {% endif %}
                     </div>
-                    {% endif %}
-                    {% if entry.review.get('matched_bonus') %}
-                    <div>
-                        <span style="color: var(--color-secondary); font-weight: 600;">🏆 Bonus:</span>
-                        <span style="color: var(--color-muted);">{{ entry.review.get('matched_bonus')|join(' • ') }}</span>
-                    </div>
-                    {% endif %}
-                </div>
+                </details>
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
 {% endif %}
-{% endif %}
 
-{% if hunt_state.is_expired %}
 <div style="text-align: center; color: var(--color-muted); margin-top: 2rem; font-size: 0.9rem;">
     Hunt closed on {{ hunt_state.ends_at.strftime('%B %d, %Y at %I:%M %p') }}
 </div>
@@ -143,16 +139,6 @@
     function openPhotoModal(displayUrl) {
         document.getElementById('modal-photo').src = displayUrl;
         $('#photoModal').foundation('open');
-    }
-    function toggleWhy(id, btn) {
-        const el = document.getElementById(id);
-        if (el.style.display === 'none') {
-            el.style.display = 'block';
-            btn.textContent = 'Hide details';
-        } else {
-            el.style.display = 'none';
-            btn.textContent = 'Why this score?';
-        }
     }
     $(document).on('keydown', function(e) {
         if (e.which === 27) {

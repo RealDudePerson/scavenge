@@ -18,7 +18,7 @@
         </div>
         <div class="cell small-12 medium-5 text-right">
             <div class="big-number" id="countdown-display" data-seconds-remaining="{{ hunt_state.seconds_remaining }}" style="font-family: 'Fredoka', sans-serif; font-size: 3rem; font-weight: 700; line-height: 1; color: var(--color-warning);">
-                ⏱️ {{ hunt_state.ends_at_display }}
+                ⏱️ <span id="countdown-text"></span>
             </div>
             <div style="font-size: 0.85rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">time remaining</div>
         </div>
@@ -29,7 +29,7 @@
     <div style="font-size: 3rem; margin-bottom: 0.5rem;">🔒</div>
     <h2 style="margin: 0 0 0.5rem 0; color: #fff;">HUNT IS CLOSED</h2>
     <p style="margin: 0; font-size: 1.05rem;">
-        {% if hunt_state.is_expired %}
+        {% if hunt_state.ends_at is not none %}
             The hunt ended on {{ hunt_state.ends_at.strftime('%B %d, %Y at %I:%M %p') }}.
         {% else %}
             The hunt is not currently running. Please wait for the admin to start it.
@@ -138,7 +138,7 @@
         const file = input.files[0];
         if (!file) return;
 
-        const teamId = {{ session.team_id }};
+        const teamId = {{ team_id }};
         const formData = new FormData();
         formData.append('item_id', itemId);
         formData.append('team_id', teamId);
@@ -171,9 +171,9 @@
 
     // Live countdown ticker
     (function() {
-        const el = document.getElementById('countdown-display');
+        const el = document.getElementById('countdown-text');
         if (!el) return;
-        let remaining = parseInt(el.dataset.secondsRemaining, 10);
+        let remaining = parseInt(document.getElementById('countdown-display').dataset.secondsRemaining, 10);
         if (isNaN(remaining) || remaining <= 0) return;
 
         function fmt(s) {
@@ -185,14 +185,14 @@
                 : `${m}:${String(sec).padStart(2, '0')}`;
         }
 
-        el.textContent = '⏱️ ' + fmt(remaining);
+        el.textContent = fmt(remaining);
         setInterval(() => {
             remaining--;
             if (remaining <= 0) {
                 location.reload();
                 return;
             }
-            el.textContent = '⏱️ ' + fmt(remaining);
+            el.textContent = fmt(remaining);
         }, 1000);
     })();
 </script>

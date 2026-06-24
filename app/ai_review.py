@@ -1,8 +1,8 @@
 import os
 import json
 import base64
-import datetime
 import logging
+from functools import lru_cache
 from io import BytesIO
 from PIL import Image
 from openai import OpenAI
@@ -10,31 +10,11 @@ from .config import get_openai_config
 
 logger = logging.getLogger("uvicorn.error")
 
-_cfg = get_openai_config()
-client = None  # lazy init in _get_client() so module import doesn't require API key
 
+@lru_cache(maxsize=1)
 def _get_client():
-    global client
-    if client is None:
-        cfg = get_openai_config()
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
-    return client
-
-# In-memory daily spend tracker (resets on server restart)
-_daily_spend = {"date": "", "amount": 0.0}
-
-
-def _check_budget(estimated_cost: float) -> bool:
-    """Returns True if the estimated cost is within the daily budget. Updates the running total."""
-    today = datetime.date.today().isoformat()
-    if _daily_spend["date"] != today:
-        _daily_spend["date"] = today
-        _daily_spend["amount"] = 0.0
     cfg = get_openai_config()
-    if _daily_spend["amount"] + estimated_cost > cfg["daily_budget_usd"]:
-        return False
-    _daily_spend["amount"] += estimated_cost
-    return True
+    return OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=60, max_retries=0)
 
 
 def _empty_review(reason: str) -> dict:
@@ -67,25 +47,12 @@ def review_image(
     required_properties: list,
     bonus_properties: list,
 ) -> dict:
-    """Send the image to the OpenAI-compatible endpoint and parse the structured response.
-
-    Returns a dict with keys:
-        is_target (bool), confidence (float 0-1),
-        matched_required (list[str]), missed_required (list[str]),
-        matched_bonus (list[str]), missed_bonus (list[str]),
-        reason (str)
-    """
+    """Send the image to the OpenAI-compatible endpoint and parse the structured response."""
     cfg = get_openai_config()
 
     if not cfg["api_key"]:
         logger.error("OPENAI_API_KEY env var is not set — cannot run AI review.")
         return _empty_review("AI service not configured (missing API key).")
-
-    # Cheap heuristic: gpt-4o-mini is ~$0.0001 per review, gpt-4o is ~$0.01
-    estimated_cost = 0.01 if "gpt-4o" == cfg["model"] else 0.0005
-    if not _check_budget(estimated_cost):
-        logger.warning(f"OpenAI daily budget exceeded ({_daily_spend['amount']:.4f} USD today).")
-        return _empty_review("AI service daily budget exceeded.")
 
     try:
         b64 = _image_to_base64_jpeg(image_path)
@@ -137,11 +104,9 @@ def review_image(
         logger.error(f"OpenAI API call failed: {e}")
         return _empty_review("AI service unavailable.")
 
-    # Try to parse the JSON response
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        # Try to find JSON in the text
         start = raw.find("{")
         end = raw.rfind("}")
         if start != -1 and end != -1 and end > start:
@@ -154,7 +119,6 @@ def review_image(
             logger.error(f"Could not parse AI review response: {raw}")
             return _empty_review("AI returned an invalid response.")
 
-    # Normalize and validate fields
     return {
         "is_target": bool(parsed.get("is_target", False)),
         "confidence": float(parsed.get("confidence", 0.0)),
