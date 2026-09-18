@@ -59,11 +59,14 @@ teams:
 - **AI is the sole gate** — no GPS/radius check. Old schema had `lat`/`lon`/`radius_meters`/`location`; removed. If you see those in old YAMLs, they're stale.
 - **Schema changes require `/admin/reset`** — adding a column to `models.py` doesn't migrate; it requires drop+recreate. Then `/admin/load-hunts` and `/admin/load-teams` to repopulate.
 - **Hunt timer is global state in `admin_config.yaml`** — `hunt_ends_at` (ISO timestamp or empty) + `hunt_duration_minutes` (default 160). When empty, hunt is closed and `/submit` rejects. Admin dashboard has Start/Extend (+5min)/Stop buttons.
-- **Submission flow gates** (in order in `app/main.py:636`): hunt state → empty file → locked check (10 attempts max) → freshness check (EXIF timestamp vs server time) → AI review → DB insert.
+- **Submission flow gates** (in order in `app/main.py`): team session match → hunt state → empty file → locked check (10 attempts max) → freshness check (EXIF timestamp vs server time) → AI review → DB insert. The locked/attempt check is repeated inside the insert transaction because the AI call opens a race window.
+- **AI review runs in a threadpool** (`run_in_threadpool`) — it is a blocking network call and must never run directly on the event loop, or one team's review stalls every other request. Same for any sync DB work: query the theme cache, don't hit the DB synchronously per request.
+- **Set `SESSION_SECRET` in production** — unset falls back to a random per-process key, so every restart invalidates all sessions.
 - **EXIF timestamp is interpreted as UTC** if `OffsetTimeOriginal` (EXIF 2.31, tag 0x9010) is present, else treated as server local time. Photos with no EXIF timestamp are rejected.
 - **NGINX upload limit** — if serving behind NGINX, set `client_max_body_size 20M+` in the `http {}` block or you'll get `413 Request Entity Too Large` for phone photos.
 - **Three StaticFiles mounts** for uploads: `/uploads/originals`, `/uploads/thumb`, `/uploads/display`. Don't change to a single mount — the dirs map directly to URL paths.
-- **`admin_config.yaml` is gitignored but lives on disk with the real OpenAI key** (key takes precedence over `OPENAI_API_KEY` env var). If you copy this repo to share, scrub the key or rotate it with the provider.
+- **`admin_config.yaml` is gitignored but lives on disk with the real OpenAI key** (`OPENAI_API_KEY` env var takes precedence over the YAML key). If you copy this repo to share, scrub the key or rotate it with the provider.
+- **Vendored front-end assets** live in `static/vendor/` (Foundation CSS/JS, jQuery) and are served from `/static` so the UI works with no cell signal. Google Fonts still loads from CDN and degrades to `system-ui` offline.
 
 ## Admin Workflows
 
@@ -85,7 +88,7 @@ teams:
 
 **Admin (auth: `is_admin=True` in session)**: `/admin/dashboard`, `/admin/hints`, `/admin/all-gallery`, all `POST /admin/*` endpoints
 
-**Always public, no auth**: `POST /submit` (gated by hunt state only, since the form posts `team_id` directly)
+**Team (auth: `team_id` in session)**: `POST /submit` — requires a logged-in team and the posted `team_id` must match the session; gated by hunt state too
 
 ## Tuning Knobs (in `app/main.py:36-37`)
 

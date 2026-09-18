@@ -38,7 +38,6 @@ def get_openai_config():
         "api_key": os.environ.get("OPENAI_API_KEY") or cfg.get("openai_api_key", ""),
         "model": cfg.get("openai_model", "gpt-4o-mini"),
         "base_url": cfg.get("openai_base_url", "https://api.openai.com/v1"),
-        "daily_budget_usd": float(cfg.get("openai_daily_budget_usd", 5.0)),
     }
 
 
@@ -57,7 +56,7 @@ def get_hunt_state() -> dict:
     """
     cfg = _load_cfg()
     ends_str = (cfg.get("hunt_ends_at") or "").strip()
-    duration = int(cfg.get("hunt_duration_minutes", 60))
+    duration = int(cfg.get("hunt_duration_minutes", 160))
 
     if not ends_str:
         return {
@@ -91,7 +90,24 @@ def get_hunt_state() -> dict:
 
 
 def set_hunt_ends_at(iso_timestamp: str):
-    cfg = _load_cfg()
-    cfg["hunt_ends_at"] = iso_timestamp
-    with open("admin_config.yaml", "w") as f:
-        yaml.safe_dump(cfg, f, default_flow_style=False)
+    """Update hunt_ends_at in admin_config.yaml in place, preserving comments and key order."""
+    path = "admin_config.yaml"
+    try:
+        with open(path, "r") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    value = "'" + iso_timestamp.replace("'", "''") + "'"
+    new_line = f"hunt_ends_at: {value}\n"
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("hunt_ends_at:"):
+            lines[i] = new_line
+            break
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append(new_line)
+
+    with open(path, "w") as f:
+        f.writelines(lines)

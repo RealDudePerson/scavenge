@@ -1,5 +1,8 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, responses
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 from sqlalchemy.future import select
@@ -22,17 +25,26 @@ pillow_heif.register_heif_opener()
 
 logger = logging.getLogger("uvicorn.error")
 
-app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", uuid.uuid4().hex))
+_SESSION_SECRET = os.environ.get("SESSION_SECRET")
+if not _SESSION_SECRET:
+    _SESSION_SECRET = uuid.uuid4().hex
+    logger.warning("SESSION_SECRET is not set — using a random key; all logins will be lost on restart.")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    await _refresh_theme()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=_SESSION_SECRET)
 templates = Jinja2Templates(directory="templates")
 app.mount("/uploads/originals", StaticFiles(directory="uploads/originals"), name="uploads-originals")
 app.mount("/uploads/thumb", StaticFiles(directory="uploads/thumb"), name="uploads-thumb")
 app.mount("/uploads/display", StaticFiles(directory="uploads/display"), name="uploads-display")
-
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 MAX_ATTEMPTS_PER_ITEM = 10
@@ -51,6 +63,8 @@ DEFAULT_THEME = {
     "info":         "#4A90E2",
 }
 
+_ACTIVE_THEME = DEFAULT_THEME.copy()
+
 
 def _ctx(request: Request, **extra) -> dict:
     """Base context for every rendered template."""
@@ -65,20 +79,27 @@ def _ctx(request: Request, **extra) -> dict:
     }
 
 
-def _active_theme() -> dict:
-    """First hunt's theme merged over DEFAULT_THEME. Reads sync — called once per request."""
+async def _refresh_theme():
+    """Load the first hunt's theme merged over DEFAULT_THEME into the module cache."""
+    global _ACTIVE_THEME
     try:
-        from .database import sync_session
-        with sync_session() as s:
-            hunt = s.query(Hunt).order_by(Hunt.id.asc()).first()
-        if not hunt or not hunt.theme_json:
-            return DEFAULT_THEME.copy()
-        overrides = json.loads(hunt.theme_json)
-        merged = DEFAULT_THEME.copy()
-        merged.update({k: v for k, v in overrides.items() if v})
-        return merged
+        async with async_session() as session:
+            hunt = (await session.execute(select(Hunt).order_by(Hunt.id.asc()))).scalars().first()
+        if hunt and hunt.theme_json:
+            overrides = json.loads(hunt.theme_json)
+            merged = DEFAULT_THEME.copy()
+            merged.update({k: v for k, v in overrides.items() if v})
+            _ACTIVE_THEME = merged
+        else:
+            _ACTIVE_THEME = DEFAULT_THEME.copy()
     except Exception:
-        return DEFAULT_THEME.copy()
+        logger.exception("Failed to load active theme; using defaults")
+        _ACTIVE_THEME = DEFAULT_THEME.copy()
+
+
+def _active_theme() -> dict:
+    """Cached active theme — populated at startup and refreshed on hunt/reset changes."""
+    return _ACTIVE_THEME
 
 
 def require_admin(request: Request):
@@ -138,6 +159,7 @@ async def reset_db():
                     file_path = os.path.join(upload_dir, filename)
                     if os.path.isfile(file_path):
                         os.remove(file_path)
+        await _refresh_theme()
         return {"message": "All progress and teams reset."}
     except Exception as e:
         logger.exception("Reset failed")
@@ -214,6 +236,7 @@ async def load_hunts():
                 session.add(item)
             await session.commit()
             loaded.append(data['name'])
+    await _refresh_theme()
     return {"message": f"Hunts loaded. {len(loaded)} hunt(s), skipped {len(skipped)} item(s) without required_properties."}
 
 
@@ -245,7 +268,9 @@ async def admin_review_submission(sub_id: int):
 
     required = json.loads(item.required_properties or "[]")
     bonus = json.loads(item.bonus_properties or "[]")
-    review = review_image(sub.photo_path, item.name, item.description or "", required, bonus)
+    review = await run_in_threadpool(
+        review_image, sub.photo_path, item.name, item.description or "", required, bonus
+    )
 
     all_required_met = (
         review["is_target"]
@@ -572,7 +597,12 @@ def make_thumbnails(original_path: str, base_name: str) -> None:
 
 
 @app.post("/submit")
-async def submit_photo(item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...)):
+async def submit_photo(request: Request, item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...), _: None = Depends(require_team)):
+    session_team_id = request.session.get("team_id")
+    if session_team_id != team_id:
+        logger.warning(f"Submission REJECTED: posted team_id {team_id} does not match logged-in team {session_team_id}")
+        return {"message": "Team mismatch", "redirect": "/result?status=error&message=You are not logged in as that team."}
+
     if not get_hunt_state()["is_open"]:
         logger.info(f"Submission REJECTED: Hunt is not currently open (team_id={team_id}, item_id={item_id})")
         return {
@@ -669,7 +699,9 @@ async def submit_photo(item_id: int = Form(...), team_id: int = Form(...), file:
 
         required = json.loads(item.required_properties or "[]")
         bonus = json.loads(item.bonus_properties or "[]")
-        review = review_image(original_path, item.name, item.description or "", required, bonus)
+        review = await run_in_threadpool(
+            review_image, original_path, item.name, item.description or "", required, bonus
+        )
 
         all_required_met = (
             review["is_target"]
@@ -681,9 +713,28 @@ async def submit_photo(item_id: int = Form(...), team_id: int = Form(...), file:
         points_awarded = item.points + awarded_bonus if all_required_met else 0
         is_locked = all_required_met
 
-        attempt_number = attempt_count + 1
-
         async with async_session() as session:
+            # Re-check right before insert: the AI call above opened a race window.
+            locked = (await session.execute(
+                select(Submission).where(
+                    Submission.team_id == team_id,
+                    Submission.item_id == item_id,
+                    Submission.verified == True
+                )
+            )).scalar_one_or_none()
+            attempt_count = (await session.execute(
+                select(func.count(Submission.id)).where(
+                    Submission.team_id == team_id,
+                    Submission.item_id == item_id
+                )
+            )).scalar()
+            if locked or attempt_count >= MAX_ATTEMPTS_PER_ITEM:
+                await session.rollback()
+                _cleanup_files(original_path, thumb_path, display_path)
+                logger.info(f"Submission REJECTED (Race): Team '{team_name}' — '{item_name}' became locked or maxed during AI review")
+                return {"message": "Item locked", "redirect": "/result?status=error&message=That item is no longer available for submission."}
+
+            attempt_number = attempt_count + 1
             sub = Submission(
                 item_id=item_id, team_id=team_id,
                 photo_path=original_path,

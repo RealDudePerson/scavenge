@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" rel="anonymous">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/foundation-sites@6.9.0/dist/css/foundation.min.css">
+    <link rel="stylesheet" href="/static/vendor/foundation.min.css">
     <style>
         :root {
             --color-primary: {{ theme.primary|default('#FF6B9D') }};
@@ -113,8 +113,8 @@
         {% block content %}{% endblock %}
     </div>
 
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/foundation-sites@6.9.0/dist/js/foundation.min.js"></script>
+    <script src="/static/vendor/jquery.min.js"></script>
+    <script src="/static/vendor/foundation.min.js"></script>
     <script>
         $(document).foundation();
 

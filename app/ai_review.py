@@ -29,12 +29,29 @@ def _empty_review(reason: str) -> dict:
     }
 
 
+def _as_confidence(value) -> float:
+    """Coerce an AI-returned confidence into a 0.0-1.0 float, defaulting safely."""
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _as_list(value) -> list:
+    """Coerce an AI-returned field into a list of strings. Bare strings are rejected."""
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return []
+
+
 def _image_to_base64_jpeg(image_path: str) -> str:
     """Open an image (any format Pillow supports) and return JPEG bytes as base64.
+    Downscales to at most 1200px so we never ship a full-res phone photo to the API.
     This ensures OpenAI-compatible endpoints always receive a JPEG."""
     with Image.open(image_path) as img:
         if img.mode in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
+        img.thumbnail((1200, 1200), Image.LANCZOS)
         buf = BytesIO()
         img.save(buf, "JPEG", quality=90)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -104,27 +121,32 @@ def review_image(
         logger.error(f"OpenAI API call failed: {e}")
         return _empty_review("AI service unavailable.")
 
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                parsed = json.loads(raw[start:end + 1])
-            except json.JSONDecodeError:
-                logger.error(f"Could not parse AI review response: {raw}")
-                return _empty_review("AI returned an invalid response.")
-        else:
-            logger.error(f"Could not parse AI review response: {raw}")
-            return _empty_review("AI returned an invalid response.")
+    if not raw or not isinstance(raw, str):
+        logger.error(f"AI returned an empty response: {raw!r}")
+        return _empty_review("AI returned an empty response.")
 
-    return {
-        "is_target": bool(parsed.get("is_target", False)),
-        "confidence": float(parsed.get("confidence", 0.0)),
-        "matched_required": list(parsed.get("matched_required", [])),
-        "missed_required": list(parsed.get("missed_required", [])),
-        "matched_bonus": list(parsed.get("matched_bonus", [])),
-        "missed_bonus": list(parsed.get("missed_bonus", [])),
-        "reason": str(parsed.get("reason", "No reason provided.")),
-    }
+    try:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                raise
+            parsed = json.loads(raw[start:end + 1])
+
+        if not isinstance(parsed, dict):
+            raise ValueError("AI response was not a JSON object")
+
+        return {
+            "is_target": bool(parsed.get("is_target", False)),
+            "confidence": _as_confidence(parsed.get("confidence", 0.0)),
+            "matched_required": _as_list(parsed.get("matched_required")),
+            "missed_required": _as_list(parsed.get("missed_required")),
+            "matched_bonus": _as_list(parsed.get("matched_bonus")),
+            "missed_bonus": _as_list(parsed.get("missed_bonus")),
+            "reason": str(parsed.get("reason", "No reason provided.")),
+        }
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.error(f"Could not parse AI review response ({e}): {raw}")
+        return _empty_review("AI returned an invalid response.")

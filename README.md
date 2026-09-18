@@ -31,7 +31,6 @@ admin_password: "your_admin_password_here"
 openai_api_key: "sk-..."              # your AI provider key
 openai_model: "gpt-4o-mini"           # any vision-capable chat model
 openai_base_url: "https://api.openai.com/v1"  # or any OpenAI-compatible endpoint
-openai_daily_budget_usd: 5.0          # hard cap on daily AI spend
 max_photo_age_hours: 8                # max age of EXIF timestamp on a submission
 
 hunt_ends_at: ""                      # ISO timestamp; empty = hunt closed
@@ -39,6 +38,8 @@ hunt_duration_minutes: 160            # default duration for "Start Hunt" button
 ```
 
 The `OPENAI_API_KEY` environment variable takes precedence over the YAML key if both are set.
+
+Set the `SESSION_SECRET` environment variable in production. If it is unset, the server generates a random key at startup and warns — which means every restart (including `--reload` code changes) logs all teams out.
 
 ## Setting up a hunt
 
@@ -156,9 +157,7 @@ Two knobs are hardcoded in `app/main.py`:
 
 Edit and restart if you need different values.
 
-### Cost
-
-The server tracks a daily USD spend in memory. The estimate is `$0.01` for full `gpt-4o` and `$0.0005` for everything else (including `gpt-4o-mini`). When the daily budget is hit, the AI service returns a budget-exceeded error and submissions are rejected until the next day. The tracker resets on server restart.
+The photo sent to the AI is downscaled to at most 1200px, so review cost and latency stay flat regardless of phone camera resolution. There is no built-in spend cap — point `openai_base_url` at a provider whose budget you control.
 
 ## Deployment notes
 
