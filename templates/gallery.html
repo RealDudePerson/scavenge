@@ -40,7 +40,7 @@
                     </div>
                     <div style="font-size: 0.7rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">points</div>
                 </div>
-                {% if entry.submission.proximity_points_awarded %}
+                {% if entry.submission.verified and entry.submission.proximity_points_awarded %}
                 <div style="font-size: 0.8rem; color: var(--color-accent); font-weight: 600; margin-bottom: 0.5rem;">
                     +{{ entry.submission.proximity_points_awarded }} proximity
                 </div>

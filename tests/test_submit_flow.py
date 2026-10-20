@@ -30,6 +30,18 @@ def _approved_review(*args, **kwargs):
     }
 
 
+def _rejected_review(*args, **kwargs):
+    return {
+        "is_target": True,
+        "confidence": 0.95,
+        "matched_required": [],
+        "missed_required": ["shows a thing"],
+        "matched_bonus": [],
+        "missed_bonus": [],
+        "reason": "Does not show the thing.",
+    }
+
+
 def _open_hunt(monkeypatch):
     monkeypatch.setattr(
         main,
@@ -186,3 +198,119 @@ def test_admin_gallery_surfaces_location(client, session_factory, monkeypatch):
     assert "hit" in body
     assert "0 m" in body
     assert "+50 proximity" in body
+
+
+# --- DEFECT: proximity is a bonus on a valid find, not a consolation prize ---
+
+def test_rejected_in_range_records_status_but_no_proximity(client, session_factory, monkeypatch):
+    """In range + AI-rejected => 0 proximity points, but status/distance kept."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    monkeypatch.setattr(main, "review_image", _rejected_review)
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(datetime_original=dt, offset_original=off, gps=TARGET).getvalue()
+    response = _submit(client, ids["item_id"], ids["team_id"], jpeg)
+
+    assert response.status_code == 200
+    assert response.json()["message"].startswith("Not approved")
+
+    sub = fetch_submissions(session_factory)[0]
+    assert sub["verified"] is False
+    assert sub["points_awarded"] == 0
+    assert sub["proximity_points_awarded"] == 0     # not awarded on rejection
+    assert sub["location_status"] == "hit"          # diagnostics preserved
+    assert sub["distance_m"] == 0.0
+    assert sub["gps_lat"] == 34.0
+    assert sub["gps_lon"] == -116.0
+
+
+def test_approved_in_range_awards_full_proximity(client, session_factory, monkeypatch):
+    """In range + approved => the full proximity points are stored."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(datetime_original=dt, offset_original=off, gps=TARGET).getvalue()
+    response = _submit(client, ids["item_id"], ids["team_id"], jpeg)
+
+    assert response.status_code == 200
+    sub = fetch_submissions(session_factory)[0]
+    assert sub["verified"] is True
+    assert sub["proximity_points_awarded"] == 50
+    assert sub["points_awarded"] == 150             # 100 AI + 50 proximity
+    assert sub["location_status"] == "hit"
+
+
+def test_gallery_hides_proximity_badge_for_rejected(client, session_factory, monkeypatch):
+    """Belt and braces: a rejected photo must not advertise proximity points."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    monkeypatch.setattr(main, "review_image", _rejected_review)
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(datetime_original=dt, offset_original=off, gps=TARGET).getvalue()
+    _submit(client, ids["item_id"], ids["team_id"], jpeg)
+
+    body = client.get("/gallery").text
+    assert "+50 proximity" not in body
+    assert "Not approved" in body
+
+
+def test_admin_rereview_rejection_clears_proximity(client, session_factory, monkeypatch):
+    """Admin re-review applies the same rule: rejected => 0 proximity stored."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    monkeypatch.setattr(main, "get_admin_password", lambda: "adminpw")
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(datetime_original=dt, offset_original=off, gps=TARGET).getvalue()
+    _submit(client, ids["item_id"], ids["team_id"], jpeg)
+    approved = fetch_submissions(session_factory)[0]
+    assert approved["proximity_points_awarded"] == 50
+
+    # The re-review now rejects the same photo.
+    monkeypatch.setattr(main, "review_image", _rejected_review)
+    assert client.post("/admin/login", data={"password": "adminpw"}).status_code == 200
+    response = client.post(f"/admin/review-submission/{approved['id']}")
+    assert response.status_code == 200
+    assert response.json()["verified"] is False
+    assert response.json()["points_awarded"] == 0
+
+    after = fetch_submissions(session_factory)[0]
+    assert after["verified"] is False
+    assert after["points_awarded"] == 0
+    assert after["proximity_points_awarded"] == 0
+    assert after["location_status"] == "hit"        # diagnostics untouched
+
+
+def test_admin_rereview_approval_awards_proximity(client, session_factory, monkeypatch):
+    """A re-review that approves a previously-rejected photo awards proximity."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    monkeypatch.setattr(main, "review_image", _rejected_review)
+    monkeypatch.setattr(main, "get_admin_password", lambda: "adminpw")
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(datetime_original=dt, offset_original=off, gps=TARGET).getvalue()
+    _submit(client, ids["item_id"], ids["team_id"], jpeg)
+    rejected = fetch_submissions(session_factory)[0]
+    assert rejected["proximity_points_awarded"] == 0
+
+    monkeypatch.setattr(main, "review_image", _approved_review)
+    assert client.post("/admin/login", data={"password": "adminpw"}).status_code == 200
+    response = client.post(f"/admin/review-submission/{rejected['id']}")
+    assert response.status_code == 200
+    assert response.json()["verified"] is True
+    assert response.json()["points_awarded"] == 150
+
+    after = fetch_submissions(session_factory)[0]
+    assert after["verified"] is True
+    assert after["points_awarded"] == 150
+    assert after["proximity_points_awarded"] == 50
+    assert after["location_status"] == "hit"

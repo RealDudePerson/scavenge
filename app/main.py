@@ -280,6 +280,20 @@ def score_proximity(item, coords):
     return ("far", 0, distance)
 
 
+def proximity_points_for_status(item, status):
+    """Proximity points implied by an already-recorded ``location_status``.
+
+    Used on re-review, where the stored status (not raw coordinates) is the
+    source of truth. Mirrors :func:`score_proximity`'s hit/near mapping.
+    """
+    points = item.proximity_points or 0
+    if status == "hit":
+        return points
+    if status == "near":
+        return points // 2
+    return 0
+
+
 def _location_note(status: str, proximity_points_awarded: int) -> str:
     """Human-readable location sentence for the /result message (§2.4)."""
     if status == "hit":
@@ -492,9 +506,10 @@ async def admin_review_submission(sub_id: int):
     all_bonus_met = all_required_met and len(review["missed_bonus"]) == 0 and len(bonus) > 0
     awarded_bonus = item.bonus_points if all_bonus_met else 0
     ai_points = item.points + awarded_bonus if all_required_met else 0
-    # Keep any proximity points already awarded; apply gate mode against the
-    # stored location status (§2.3).
-    proximity_points = sub.proximity_points_awarded or 0
+    # Proximity is a bonus on a valid find, never a consolation prize: it is
+    # awarded only when the photo is approved. The stored location_status is
+    # still the source of truth (§2.3) and is left untouched.
+    proximity_points = proximity_points_for_status(item, sub.location_status) if all_required_met else 0
     points_awarded = ai_points + proximity_points
     verified = all_required_met
     if (item.proximity_mode or "bonus") == "gate":
@@ -505,6 +520,7 @@ async def admin_review_submission(sub_id: int):
         sub.ai_review_result = json.dumps(review)
         sub.ai_bonus_awarded = awarded_bonus
         sub.points_awarded = points_awarded
+        sub.proximity_points_awarded = proximity_points
         sub.verified = verified
         await session.commit()
 
@@ -994,7 +1010,11 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
         ai_points = item.points + awarded_bonus if all_required_met else 0
 
         # §2.3 — proximity is added *beside* the AI points, never instead of them.
-        location_status, proximity_points_awarded, distance_m = score_proximity(item, coords)
+        # It is a bonus on a valid find, so it is awarded only when the photo is
+        # approved (all required met). location_status and distance_m are always
+        # persisted for diagnostics, even on a rejected photo.
+        location_status, proximity_points, distance_m = score_proximity(item, coords)
+        proximity_points_awarded = proximity_points if all_required_met else 0
         points_awarded = ai_points + proximity_points_awarded
 
         is_locked = all_required_met
