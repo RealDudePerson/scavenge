@@ -557,24 +557,52 @@ async def admin_review_submission(sub_id: int):
 
 # --- Phase 2: Map API ---
 
-@app.post("/api/position")
-async def update_position(request: Request, _: None = Depends(require_team)):
-    """Record the team's live position for the map. Display only, never scored."""
-    team_id = request.session.get("team_id")
+def _blank_position_value(value) -> bool:
+    """True when a client sent nothing meaningful for a coordinate."""
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
 
-    if _position_rate_limited(request):
-        logger.warning(f"Position RATE-LIMITED for {_client_ip(request)}")
-        raise HTTPException(status_code=429, detail="Too many position updates.")
 
+async def _read_position_payload(request: Request):
+    """Read a position update from a JSON body *or* form encoding (§1).
+
+    Both encodings are accepted so existing clients keep working. Returns
+    ``(lat_raw, lon_raw, accuracy_raw, source)``.
+    """
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type == "application/json":
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON body must be an object.")
+        return (
+            body.get("lat"),
+            body.get("lon"),
+            body.get("accuracy_m"),
+            body.get("source") or "app",
+        )
     # Read raw form data so we can validate empty strings ourselves.
     form = await request.form()
-    lat_raw = form.get("lat")
-    lon_raw = form.get("lon")
-    accuracy_raw = form.get("accuracy_m")
-    source = form.get("source") or "app"
+    return (
+        form.get("lat"),
+        form.get("lon"),
+        form.get("accuracy_m"),
+        form.get("source") or "app",
+    )
 
-    # Validate: must be non-empty, finite real numbers within range (§3).
-    if not lat_raw or not lon_raw:
+
+def _coerce_position(lat_raw, lon_raw, accuracy_raw):
+    """Validate a raw position payload into ``(lat, lon, accuracy)`` (§3).
+
+    Must be non-empty, finite real numbers within range; anything else raises a
+    400. ``accuracy`` is optional and becomes ``None`` when absent or invalid.
+    """
+    if _blank_position_value(lat_raw) or _blank_position_value(lon_raw):
         raise HTTPException(status_code=400, detail="lat and lon must be non-empty.")
     try:
         lat_f = float(lat_raw)
@@ -588,15 +616,28 @@ async def update_position(request: Request, _: None = Depends(require_team)):
     if not (-180.0 <= lon_f <= 180.0):
         raise HTTPException(status_code=400, detail="lon out of range [-180, 180].")
 
-    if accuracy_raw is not None and accuracy_raw.strip():
+    acc = None
+    if not _blank_position_value(accuracy_raw):
         try:
             acc = float(accuracy_raw)
         except (TypeError, ValueError):
             acc = None
         if acc is not None and (math.isnan(acc) or math.isinf(acc)):
             acc = None
-    else:
-        acc = None
+    return lat_f, lon_f, acc
+
+
+@app.post("/api/position")
+async def update_position(request: Request, _: None = Depends(require_team)):
+    """Record the team's live position for the map. Display only, never scored."""
+    team_id = request.session.get("team_id")
+
+    if _position_rate_limited(request):
+        logger.warning(f"Position RATE-LIMITED for {_client_ip(request)}")
+        raise HTTPException(status_code=429, detail="Too many position updates.")
+
+    lat_raw, lon_raw, accuracy_raw, source = await _read_position_payload(request)
+    lat_f, lon_f, acc = _coerce_position(lat_raw, lon_raw, accuracy_raw)
 
     now = datetime.datetime.now(timezone.utc)
     async with async_session() as session:
@@ -810,8 +851,12 @@ async def admin_map_page(request: Request, _: None = Depends(require_admin)):
 
 # --- Team Endpoints ---
 
-@app.post("/team/login")
-async def login(request: Request, passphrase: str = Form(...)):
+async def _authenticate_team(request: Request, passphrase: str):
+    """Shared team login: rate-limit, verify, set the session (§3.3).
+
+    Used by both the form route ``/team/login`` and the JSON route
+    ``/api/login`` so the two can never diverge (§2).
+    """
     if _login_rate_limited(request):
         logger.warning(f"Login RATE-LIMITED for {_client_ip(request)}")
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait and try again.")
@@ -823,39 +868,115 @@ async def login(request: Request, passphrase: str = Form(...)):
     if not team:
         raise HTTPException(status_code=401, detail="Invalid passphrase")
     request.session["team_id"] = team.id
+    return team
+
+
+@app.post("/team/login")
+async def login(request: Request, passphrase: str = Form(...)):
+    await _authenticate_team(request, passphrase)
     return {"message": "Logged in!", "redirect": "/hunt/dashboard"}
+
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    """JSON team login for native clients (§1). Reuses the form route's logic."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    passphrase = body.get("passphrase")
+    if not isinstance(passphrase, str) or not passphrase:
+        raise HTTPException(status_code=400, detail="passphrase is required")
+    team = await _authenticate_team(request, passphrase)
+    return {"team_id": team.id, "team_name": team.name}
+
+
+async def _load_items_and_state(session, team_id):
+    """Active hunt's items + this team's per-item state (§1).
+
+    Shared by the HTML dashboard and ``GET /api/items`` so the two can never
+    diverge (§2). ``item_state`` is keyed by item id with the same keys the
+    dashboard template reads.
+    """
+    # Scope items to the active hunt so a multi-hunt install does not mix
+    # item lists or inflate the maximum (§1.4).
+    items_query = select(HuntItem)
+    if _ACTIVE_HUNT_ID is not None:
+        items_query = items_query.where(HuntItem.hunt_id == _ACTIVE_HUNT_ID)
+    items = (await session.execute(items_query)).scalars().all()
+
+    subs = (await session.execute(
+        select(Submission).where(Submission.team_id == team_id)
+    )).scalars().all()
+
+    item_state = {}
+    for sub in subs:
+        state = item_state.setdefault(sub.item_id, {
+            "attempts": 0, "locked": False, "points_awarded": 0, "has_bonus": False,
+            "proximity_points_awarded": 0, "location_status": None,
+        })
+        state["attempts"] += 1
+        if sub.verified:
+            state["locked"] = True
+            state["points_awarded"] = sub.points_awarded
+            state["has_bonus"] = sub.ai_bonus_awarded > 0
+            state["proximity_points_awarded"] = sub.proximity_points_awarded or 0
+            state["location_status"] = sub.location_status
+    return items, item_state
+
+
+def _serialize_item(item, state) -> dict:
+    """Team-safe item payload (§1).
+
+    Deliberately omits ``target_lat``/``target_lon``/``radius_meters``: this is
+    team-facing and leaking the true target lets a player walk straight to the
+    spot (phase 2 §1). The display ``zone`` is allowed and mirrors ``/api/map``.
+    """
+    state = state or {}
+    payload = {
+        "id": item.id,
+        "name": item.name,
+        "description": item.description,
+        "points": item.points,
+        "bonus_points": item.bonus_points,
+        "bonus_hint": item.bonus_hint,
+        "locked": bool(state.get("locked", False)),
+        "attempts": state.get("attempts", 0),
+        "points_awarded": state.get("points_awarded", 0),
+        "has_bonus": bool(state.get("has_bonus", False)),
+        "proximity_points_awarded": state.get("proximity_points_awarded", 0),
+        "location_status": state.get("location_status"),
+        "max_attempts": MAX_ATTEMPTS_PER_ITEM,
+        "zone": None,
+    }
+    if item.zone_lat is not None and item.zone_lon is not None:
+        payload["zone"] = {
+            "lat": item.zone_lat,
+            "lon": item.zone_lon,
+            "radius_m": item.zone_radius_meters or 100.0,
+        }
+    return payload
+
+
+@app.get("/api/items")
+async def api_items(request: Request, _: None = Depends(require_team)):
+    """Active hunt's items with this team's state (§1).
+
+    Team-facing: never includes the true target (see :func:`_serialize_item`).
+    """
+    team_id = request.session.get("team_id")
+    async with async_session() as session:
+        items, item_state = await _load_items_and_state(session, team_id)
+    return [_serialize_item(item, item_state.get(item.id)) for item in items]
 
 
 @app.get("/hunt/dashboard")
 async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
     team_id = request.session.get("team_id")
     async with async_session() as session:
-        # Scope items to the active hunt so a multi-hunt install does not mix
-        # item lists or inflate the maximum (§1.4).
-        items_query = select(HuntItem)
-        if _ACTIVE_HUNT_ID is not None:
-            items_query = items_query.where(HuntItem.hunt_id == _ACTIVE_HUNT_ID)
-        items_result = await session.execute(items_query)
-        items = items_result.scalars().all()
-
-        subs_result = await session.execute(
-            select(Submission).where(Submission.team_id == team_id)
-        )
-        subs = subs_result.scalars().all()
-
-        item_state = {}
-        for sub in subs:
-            state = item_state.setdefault(sub.item_id, {
-                "attempts": 0, "locked": False, "points_awarded": 0, "has_bonus": False,
-                "proximity_points_awarded": 0, "location_status": None,
-            })
-            state["attempts"] += 1
-            if sub.verified:
-                state["locked"] = True
-                state["points_awarded"] = sub.points_awarded
-                state["has_bonus"] = sub.ai_bonus_awarded > 0
-                state["proximity_points_awarded"] = sub.proximity_points_awarded or 0
-                state["location_status"] = sub.location_status
+        items, item_state = await _load_items_and_state(session, team_id)
 
         total_points = sum(s["points_awarded"] for s in item_state.values() if s["locked"])
         total_proximity = sum(s["proximity_points_awarded"] for s in item_state.values() if s["locked"])
@@ -885,17 +1006,33 @@ async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
         )
 
 
+async def _load_leaderboard(session):
+    """Verified points per team, highest first (§1).
+
+    Shared by the HTML leaderboard and ``GET /api/leaderboard``.
+    """
+    rank_result = await session.execute(
+        select(Team.name, func.sum(Submission.points_awarded))
+        .join(Submission, Team.id == Submission.team_id)
+        .where(Submission.verified == True)
+        .group_by(Team.name)
+        .order_by(func.sum(Submission.points_awarded).desc())
+    )
+    return rank_result.all()
+
+
+@app.get("/api/leaderboard")
+async def api_leaderboard(request: Request, _: None = Depends(require_team)):
+    """JSON leaderboard (§1). Team-authenticated — it must not be public."""
+    async with async_session() as session:
+        rows = await _load_leaderboard(session)
+    return [{"team_name": name, "points": int(points or 0)} for name, points in rows]
+
+
 @app.get("/leaderboard")
 async def get_leaderboard(request: Request, _: None = Depends(require_team)):
     async with async_session() as session:
-        rank_result = await session.execute(
-            select(Team.name, func.sum(Submission.points_awarded))
-            .join(Submission, Team.id == Submission.team_id)
-            .where(Submission.verified == True)
-            .group_by(Team.name)
-            .order_by(func.sum(Submission.points_awarded).desc())
-        )
-        leaderboard = rank_result.all()
+        leaderboard = await _load_leaderboard(session)
 
         gallery_entries = []
         hunt_state = get_hunt_state()
@@ -935,17 +1072,18 @@ async def get_leaderboard(request: Request, _: None = Depends(require_team)):
         )
 
 
-@app.get("/gallery")
-async def gallery(request: Request, _: None = Depends(require_team)):
-    team_id = request.session.get("team_id")
-    async with async_session() as session:
-        result = await session.execute(
-            select(Submission, HuntItem.name, HuntItem.points, HuntItem.bonus_hint)
-            .join(HuntItem, Submission.item_id == HuntItem.id)
-            .where(Submission.team_id == team_id)
-            .order_by(Submission.submitted_at.desc())
-        )
-        rows = result.all()
+async def _load_gallery_entries(session, team_id):
+    """This team's submissions, newest first, with resolved photo URLs (§1).
+
+    Shared by the HTML gallery and ``GET /api/gallery``.
+    """
+    result = await session.execute(
+        select(Submission, HuntItem.name, HuntItem.points, HuntItem.bonus_hint)
+        .join(HuntItem, Submission.item_id == HuntItem.id)
+        .where(Submission.team_id == team_id)
+        .order_by(Submission.submitted_at.desc())
+    )
+    rows = result.all()
 
     entries = []
     for submission, item_name, item_points, bonus_hint in rows:
@@ -958,6 +1096,36 @@ async def gallery(request: Request, _: None = Depends(require_team)):
             "thumb_url": f"/uploads/thumb/{base}.jpg",
             "display_url": f"/uploads/display/{base}.jpg",
         })
+    return entries
+
+
+@app.get("/api/gallery")
+async def api_gallery(request: Request, _: None = Depends(require_team)):
+    """This team's own submissions only (§1)."""
+    team_id = request.session.get("team_id")
+    async with async_session() as session:
+        entries = await _load_gallery_entries(session, team_id)
+    return [
+        {
+            "item_name": e["item_name"],
+            "thumb_url": e["thumb_url"],
+            "display_url": e["display_url"],
+            "verified": bool(e["submission"].verified),
+            "points_awarded": e["submission"].points_awarded or 0,
+            "proximity_points_awarded": e["submission"].proximity_points_awarded or 0,
+            "location_status": e["submission"].location_status,
+            "attempt_number": e["submission"].attempt_number,
+            "submitted_at": e["submission"].submitted_at.isoformat() if e["submission"].submitted_at else None,
+        }
+        for e in entries
+    ]
+
+
+@app.get("/gallery")
+async def gallery(request: Request, _: None = Depends(require_team)):
+    team_id = request.session.get("team_id")
+    async with async_session() as session:
+        entries = await _load_gallery_entries(session, team_id)
 
     return templates.TemplateResponse(
         request, "gallery.html", _ctx(request, entries=entries)
@@ -1167,19 +1335,52 @@ def make_thumbnails(original_path: str, base_name: str) -> None:
         d.save(display_out, "JPEG", quality=90, optimize=True)
 
 
-@app.post("/submit")
-async def submit_photo(request: Request, item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...), live_lat: str | None = Form(None), live_lon: str | None = Form(None), _: None = Depends(require_team)):
-    session_team_id = request.session.get("team_id")
+def _submission_result(*, verified, points_awarded, proximity_points_awarded,
+                       location_status, message, redirect) -> dict:
+    """Uniform result for the submission pipeline, shared by both routes (§2)."""
+    return {
+        "verified": verified,
+        "points_awarded": points_awarded,
+        "proximity_points_awarded": proximity_points_awarded,
+        "location_status": location_status,
+        "message": message,
+        "redirect": redirect,
+    }
+
+
+def _submission_failure(message, redirect, location_status: str = "unknown") -> dict:
+    """A handled rejection that never reached scoring.
+
+    ``location_status`` defaults to ``"unknown"`` because no coordinate verdict
+    was computed; paths that do score pass the real status explicitly.
+    """
+    return _submission_result(
+        verified=False,
+        points_awarded=0,
+        proximity_points_awarded=0,
+        location_status=location_status,
+        message=message,
+        redirect=redirect,
+    )
+
+
+async def _process_submission(*, item_id, team_id, session_team_id, file, live_lat, live_lon) -> dict:
+    """The single submission pipeline (§2).
+
+    Both the form route ``/submit`` and the JSON route ``/api/submit`` call
+    this, so AI review, EXIF parsing, proximity scoring and the attempt/lock
+    rules cannot diverge between them. Returns a :func:`_submission_result`.
+    """
     if session_team_id != team_id:
         logger.warning(f"Submission REJECTED: posted team_id {team_id} does not match logged-in team {session_team_id}")
-        return {"message": "Team mismatch", "redirect": "/result?status=error&message=You are not logged in as that team."}
+        return _submission_failure("Team mismatch", "/result?status=error&message=You are not logged in as that team.")
 
     if not get_hunt_state()["is_open"]:
         logger.info(f"Submission REJECTED: Hunt is not currently open (team_id={team_id}, item_id={item_id})")
-        return {
-            "message": "Hunt closed",
-            "redirect": "/result?status=error&message=The hunt is not currently open. Please wait for the admin to start it."
-        }
+        return _submission_failure(
+            "Hunt closed",
+            "/result?status=error&message=The hunt is not currently open. Please wait for the admin to start it.",
+        )
 
     original_path = thumb_path = display_path = None
 
@@ -1191,13 +1392,13 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
 
         if not item:
             logger.error(f"Submission REJECTED: Team '{team_name}' submitted for non-existent Item ID {item_id}")
-            return {"message": "Item not found", "redirect": "/result?status=error&message=Invalid item."}
+            return _submission_failure("Item not found", "/result?status=error&message=Invalid item.")
         item_name = item.name
 
         contents = await file.read()
         if not contents:
             logger.warning(f"Submission REJECTED: Empty file from Team '{team_name}'")
-            return {"message": "Empty file", "redirect": "/result?status=error&message=The uploaded file is empty."}
+            return _submission_failure("Empty file", "/result?status=error&message=The uploaded file is empty.")
 
         filename = build_original_filename(file.filename)
         original_path = os.path.join(ORIGINALS_DIR, filename)
@@ -1222,7 +1423,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
         if taken_at is None:
             _cleanup_files(original_path, thumb_path, display_path)
             logger.info(f"Submission REJECTED (No EXIF timestamp): Team '{team_name}' — '{item_name}'")
-            return {"message": "No timestamp", "redirect": "/result?status=error&message=Photo has no EXIF timestamp. Ensure your camera's date/time is enabled."}
+            return _submission_failure("No timestamp", "/result?status=error&message=Photo has no EXIF timestamp. Ensure your camera's date/time is enabled.")
 
         max_age = timedelta(hours=max_age_hours)
         if taken_at.tzinfo is not None:
@@ -1240,7 +1441,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
             _cleanup_files(original_path, thumb_path, display_path)
             logger.info(f"Submission REJECTED (Photo too old): Team '{team_name}' — '{item_name}' "
                         f"taken at {taken_at} ({tz_label}), age {hours}h {minutes}m, max allowed {max_age_hours}h")
-            return {"message": "Photo too old", "redirect": f"/result?status=error&message=Photo is {hours}h {minutes}m old. Photos must be less than {max_age_hours:g} hours old."}
+            return _submission_failure("Photo too old", f"/result?status=error&message=Photo is {hours}h {minutes}m old. Photos must be less than {max_age_hours:g} hours old.")
 
         if age < timedelta(hours=-1):
             logger.warning(f"Photo timestamp is in the future: Team '{team_name}' — '{item_name}' "
@@ -1257,7 +1458,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
             if locked:
                 _cleanup_files(original_path, thumb_path, display_path)
                 logger.info(f"Submission REJECTED (Locked): Team '{team_name}' — '{item_name}' is already locked")
-                return {"message": "Item locked", "redirect": "/result?status=error&message=Your team already has an approved submission for this item."}
+                return _submission_failure("Item locked", "/result?status=error&message=Your team already has an approved submission for this item.")
 
             attempt_count = (await session.execute(
                 select(func.count(Submission.id)).where(
@@ -1268,7 +1469,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
             if attempt_count >= MAX_ATTEMPTS_PER_ITEM:
                 _cleanup_files(original_path, thumb_path, display_path)
                 logger.info(f"Submission REJECTED (Max Attempts): Team '{team_name}' used all {MAX_ATTEMPTS_PER_ITEM} attempts on '{item_name}'")
-                return {"message": "Max attempts", "redirect": f"/result?status=error&message=Maximum {MAX_ATTEMPTS_PER_ITEM} attempts reached for this item."}
+                return _submission_failure("Max attempts", f"/result?status=error&message=Maximum {MAX_ATTEMPTS_PER_ITEM} attempts reached for this item.")
 
         required = json.loads(item.required_properties or "[]")
         bonus = json.loads(item.bonus_properties or "[]")
@@ -1334,7 +1535,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
                 await session.rollback()
                 _cleanup_files(original_path, thumb_path, display_path)
                 logger.info(f"Submission REJECTED (Race): Team '{team_name}' — '{item_name}' became locked or maxed during AI review")
-                return {"message": "Item locked", "redirect": "/result?status=error&message=That item is no longer available for submission."}
+                return _submission_failure("Item locked", "/result?status=error&message=That item is no longer available for submission.")
 
             attempt_number = attempt_count + 1
             sub = Submission(
@@ -1366,10 +1567,14 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
                         f"Points: {points_awarded} (AI {ai_points} + proximity {proximity_points_awarded}), "
                         f"location {location_status}. Reason: {review['reason']}")
             message = f"Verified! You earned {points_awarded} points{bonus_text}.{location_note}"
-            return {
-                "message": message,
-                "redirect": f"/result?status=success&message={message}"
-            }
+            return _submission_result(
+                verified=True,
+                points_awarded=points_awarded,
+                proximity_points_awarded=proximity_points_awarded,
+                location_status=location_status,
+                message=message,
+                redirect=f"/result?status=success&message={message}",
+            )
 
         logger.info(f"Submission REJECTED: Team '{team_name}' — '{item_name}' attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM}. "
                     f"Reason: {review['reason']} | Confidence: {review['confidence']} | location {location_status}")
@@ -1381,17 +1586,61 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
         if location_status == "missing":
             reason = f"{reason} Location unavailable — no proximity points."
         message = f"Not approved: {reason}"
-        return {
-            "message": message,
-            "redirect": f"/result?status=error&message={message} (Attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM})"
-        }
+        return _submission_result(
+            verified=False,
+            points_awarded=points_awarded,
+            proximity_points_awarded=proximity_points_awarded,
+            location_status=location_status,
+            message=message,
+            redirect=f"/result?status=error&message={message} (Attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM})",
+        )
 
     except Image.UnidentifiedImageError:
         logger.warning(f"Submission REJECTED (Unsupported Format): {file.filename if file else '?'}")
         _cleanup_files(original_path, thumb_path, display_path)
-        return {"message": "Unsupported image format.", "redirect": "/result?status=error&message=The file format is not supported."}
+        return _submission_failure("Unsupported image format.", "/result?status=error&message=The file format is not supported.")
 
     except Exception:
         logger.exception("Submission REJECTED (Server Error)")
         _cleanup_files(original_path, thumb_path, display_path)
-        return {"message": "Server error", "redirect": "/result?status=error&message=An unexpected error occurred."}
+        return _submission_failure("Server error", "/result?status=error&message=An unexpected error occurred.")
+
+
+@app.post("/submit")
+async def submit_photo(request: Request, item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...), live_lat: str | None = Form(None), live_lon: str | None = Form(None), _: None = Depends(require_team)):
+    """HTML submission route — unchanged contract (message + redirect)."""
+    result = await _process_submission(
+        item_id=item_id,
+        team_id=team_id,
+        session_team_id=request.session.get("team_id"),
+        file=file,
+        live_lat=live_lat,
+        live_lon=live_lon,
+    )
+    return {"message": result["message"], "redirect": result["redirect"]}
+
+
+@app.post("/api/submit")
+async def api_submit(request: Request, item_id: int = Form(...), file: UploadFile = File(...), live_lat: str | None = Form(None), live_lon: str | None = Form(None), _: None = Depends(require_team)):
+    """JSON submission route (§1) — same pipeline, clean JSON contract.
+
+    The team is taken from the session, so no ``team_id`` field is needed.
+    Handled rejections still return HTTP 200 with ``verified=False`` and the
+    reason in ``message``; auth failures return 403 and malformed requests 4xx.
+    """
+    session_team_id = request.session.get("team_id")
+    result = await _process_submission(
+        item_id=item_id,
+        team_id=session_team_id,
+        session_team_id=session_team_id,
+        file=file,
+        live_lat=live_lat,
+        live_lon=live_lon,
+    )
+    return {
+        "verified": result["verified"],
+        "points_awarded": result["points_awarded"],
+        "proximity_points_awarded": result["proximity_points_awarded"],
+        "location_status": result["location_status"],
+        "message": result["message"],
+    }

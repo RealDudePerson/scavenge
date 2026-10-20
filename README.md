@@ -183,6 +183,17 @@ The web map (phase 2) shows item geofences, the team's own live position, and su
 - **Map page behaviour.** Vendored **Leaflet 1.9.4** (`static/vendor/leaflet/`, no CDN at runtime), 10-second poll with a full rebuild each time, polling paused while the tab is hidden, and a fail-closed error state (markers cleared + visible message) on a failed poll.
 - **Offline tiles.** If tiles cannot load, the page still renders zones, markers and the legend on a plain background with a visible, non-blocking notice. Tiles come from `map_tile_url` / `MAP_TILE_URL` (default OSM). The fallback is verified in a real headless-Chrome test (`test_map_still_works_when_tiles_fail`); skip it with no browser present.
 
+## Hunter JSON API (phase 3a)
+
+A native client (the phase 3b Android app) consumes JSON instead of rendered HTML. Every route is team-authenticated via the session cookie and **fails closed** — an unauthenticated request gets `403`, never partial data. Errors on `/api/*` are JSON, not HTML. The HTML routes and these JSON routes share one implementation, so the judging/scoring rules cannot diverge.
+
+- `POST /api/login` — body `{"passphrase": "..."}` → `{"team_id", "team_name"}`. Reuses the form route's logic and the same rate limiter; a wrong passphrase is a `401` JSON body (not a redirect).
+- `GET /api/items` — the active hunt's items, each with `id`, `name`, `description`, `points`, `bonus_points`, `bonus_hint`, the team's state (`locked`, `attempts`, `points_awarded`, `has_bonus`, ...) and the display `zone`. **Never** `target_lat`, `target_lon` or `radius_meters` — the phase 2 §1 leak rule. Enforced by `tests/test_api_phase3a.py::test_api_items_leaks_no_true_target`.
+- `POST /api/submit` — multipart `item_id`, `file`, optional `live_lat`/`live_lon` → `{"verified", "points_awarded", "proximity_points_awarded", "location_status", "message"}`. The team comes from the session. Handled rejections return HTTP 200 with `verified: false`; the AI review, EXIF parsing, proximity scoring and attempt/lock rules are identical to `/submit`.
+- `GET /api/gallery` — this team's submissions only: `item_name`, `thumb_url`, `display_url`, `verified`, `points_awarded`, `proximity_points_awarded`, `location_status`, `attempt_number`, `submitted_at`.
+- `GET /api/leaderboard` — `[{"team_name", "points"}]`. Team-authenticated; it must never be public.
+- `POST /api/position` — now accepts a JSON body (`{"lat", "lon", "accuracy_m"}`) **in addition to** the existing form encoding. The range validation, "never scored from" rule and rate limiter are unchanged.
+
 ## Deployment notes
 
 ### Behind NGINX

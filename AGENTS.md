@@ -86,7 +86,7 @@ teams:
 
 ## Routing Map
 
-**Public**: `/`, `/admin/login`, `/team/login`, `/logout`, `/result`, `/uploads/{originals,thumb,display}/...`, `/static` (none)
+**Public**: `/`, `/admin/login`, `/team/login`, `/api/login` (JSON; needs the right passphrase), `/logout`, `/result`, `/uploads/{originals,thumb,display}/...`, `/static` (none)
 
 **Team (auth: `team_id` in session)**: `/hunt/dashboard`, `/map`, `/gallery`, `/leaderboard`
 
@@ -94,7 +94,11 @@ teams:
 
 **Team (auth: `team_id` in session)**: `POST /submit` — requires a logged-in team and the posted `team_id` must match the session; gated by hunt state too
 
-**Team JSON (auth: `team_id` in session)**: `GET /api/map` (display zone only — never the true target), `POST /api/position` (display-only live position, rate-limited)
+**Team JSON (auth: `team_id` in session)**: `GET /api/map` (display zone only — never the true target), `GET /api/items` (same leak rule), `POST /api/submit` (shares `/submit`'s pipeline), `GET /api/gallery`, `GET /api/leaderboard`, `POST /api/position` (display-only live position, rate-limited; JSON **or** form body)
+
+The HTML routes and their JSON twins share one implementation (`_load_items_and_state`,
+`_load_gallery_entries`, `_load_leaderboard`, `_process_submission`, `_authenticate_team`,
+`_read_position_payload`/`_coerce_position`) — a divergence between them is a bug (§2 of phase 3a).
 
 **Admin JSON (auth: `is_admin=True`)**: `GET /admin/map` (includes every team, true targets, and unapproved submissions)
 
