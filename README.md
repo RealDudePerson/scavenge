@@ -9,8 +9,8 @@ Players log in with a team passphrase, see the list of items, and submit photos 
 ```bash
 # 1. Create the venv and install dependencies
 python3 -m venv venv
-./venv/bin/pip install fastapi uvicorn[standard] sqlalchemy aiosqlite jinja2 \
-    python-multipart pillow pillow-heif openai pyyaml
+./venv/bin/pip install fastapi uvicorn[standard] sqlalchemy[asyncio] aiosqlite jinja2 \
+    python-multipart pillow pillow-heif openai pyyaml itsdangerous
 # (or use the venv you already have)
 
 # 2. Create admin_config.yaml with your admin password and AI settings
@@ -86,8 +86,16 @@ items:
 | `items[].bonus_hint` | no | Public hint shown to all teams. |
 | `items[].required_properties` | **yes** | AI checks all of these. Missing → item is silently skipped on load. |
 | `items[].bonus_properties` | no | AI checks all of these. All match → bonus awarded. |
+| `items[].target_lat` / `target_lon` | no | True location used for proximity judging. Absent → `location_status = "no_target"`. |
+| `items[].radius_meters` | no | "Hit" ring radius in metres. Default `100`. |
+| `items[].near_multiplier` | no | Outer "near" ring = `radius_meters × near_multiplier`. Default `2.0`. |
+| `items[].proximity_points` | no | Points for a full hit (half for near). Default `0`. |
+| `items[].proximity_mode` | no | `off` \| `bonus` (default) \| `gate`. `gate` also requires a hit/near to approve. |
+| `items[].zone_lat` / `zone_lon` / `zone_radius_meters` | no | Centre/radius of the area drawn on the map (phase 2). May be offset from the true target. |
 
 `required_properties` is mandatory. If a hunt file is missing this field on an item, that item is dropped when the file is loaded — the rest of the hunt still loads.
+
+**Proximity judging.** GPS is read server-side from the stored original's EXIF (never from a form field). `points_awarded = AI points + proximity points`. A photo with no GPS still earns its AI points; its `location_status` is recorded as `missing` and the result message says so. In `gate` mode only, a missing or far coordinate also blocks approval.
 
 ### Theme colors
 
@@ -106,6 +114,8 @@ teams:
 ```
 
 Passphrases are shared with each team ahead of time — they're how teams log in. There's no concept of per-team accounts beyond this. Use something each team will remember but that isn't guessable.
+
+The plaintext passphrase lives only in this YAML file. `/admin/load-teams` stores a salted PBKDF2 hash in the database, and login compares against that hash — the database never holds the plaintext. `POST /team/login` is rate-limited per client IP.
 
 ## Loading data and running a hunt
 

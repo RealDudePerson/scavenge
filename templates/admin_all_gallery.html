@@ -49,6 +49,16 @@
                 <p style="font-size: 0.75rem; color: var(--color-muted); margin: 0 0 0.5rem 0;">
                     {{ entry.submission.submitted_at.strftime('%b %d, %Y at %I:%M %p') }}
                 </p>
+                <p style="font-size: 0.75rem; margin: 0 0 0.5rem 0;">
+                    <span style="color: var(--color-muted);">Location:</span>
+                    <strong>{{ entry.submission.location_status or 'unknown' }}</strong>
+                    {% if entry.submission.distance_m is not none %}
+                    <span style="color: var(--color-muted);">&middot; {{ "%.0f"|format(entry.submission.distance_m) }} m</span>
+                    {% endif %}
+                    {% if entry.submission.proximity_points_awarded %}
+                    <span style="color: var(--color-accent);">&middot; +{{ entry.submission.proximity_points_awarded }} proximity</span>
+                    {% endif %}
+                </p>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: auto;">
                     <details style="flex: 1;">
                         <summary class="button hollow small" style="margin: 0; cursor: pointer;">Why?</summary>

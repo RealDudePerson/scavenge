@@ -11,14 +11,18 @@ from .database import async_session, init_db
 from .models import Hunt, HuntItem, Team, Submission, Base
 from .config import HUNTS_DIR, TEAMS_DIR, ORIGINALS_DIR, THUMB_DIR, DISPLAY_DIR, get_admin_password, get_max_photo_age_hours, get_hunt_state, set_hunt_ends_at
 from .ai_review import review_image
+from .security import hash_passphrase, verify_passphrase
 import logging
 import json
+import math
+import re
+import time
 import yaml
 import os
 import uuid
 import datetime
 from datetime import timezone, timedelta
-from PIL import Image
+from PIL import Image, ImageOps
 import pillow_heif
 
 pillow_heif.register_heif_opener()
@@ -64,6 +68,10 @@ DEFAULT_THEME = {
 }
 
 _ACTIVE_THEME = DEFAULT_THEME.copy()
+# The "active" hunt is the first hunt by id — the same one whose theme is
+# applied. Kept in the module cache so the dashboard can scope its item list
+# without an extra per-request query (§1.4).
+_ACTIVE_HUNT_ID = None
 
 
 def _ctx(request: Request, **extra) -> dict:
@@ -81,10 +89,14 @@ def _ctx(request: Request, **extra) -> dict:
 
 async def _refresh_theme():
     """Load the first hunt's theme merged over DEFAULT_THEME into the module cache."""
-    global _ACTIVE_THEME
+    global _ACTIVE_THEME, _ACTIVE_HUNT_ID
     try:
         async with async_session() as session:
             hunt = (await session.execute(select(Hunt).order_by(Hunt.id.asc()))).scalars().first()
+        if hunt:
+            _ACTIVE_HUNT_ID = hunt.id
+        else:
+            _ACTIVE_HUNT_ID = None
         if hunt and hunt.theme_json:
             overrides = json.loads(hunt.theme_json)
             merged = DEFAULT_THEME.copy()
@@ -123,6 +135,193 @@ def _cleanup_files(*paths):
 
 def _thumb_base(submission) -> str:
     return os.path.splitext(os.path.basename(submission.thumbnail_path or ""))[0]
+
+
+# --- Upload filename sanitisation (§1.3) ---
+
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+_MAX_FILENAME_LENGTH = 100
+
+
+def sanitize_filename(filename, max_length: int = _MAX_FILENAME_LENGTH) -> str:
+    """Reduce a client-supplied filename to a safe basename (§1.3).
+
+    Strips any directory component, keeps only ``[A-Za-z0-9._-]``, removes
+    leading dots, and caps the length. The result can never contain a path
+    separator or a ``..`` component, so it cannot escape the upload directory.
+    """
+    if not filename:
+        return "upload"
+    if isinstance(filename, bytes):
+        filename = filename.decode("utf-8", errors="ignore")
+    # Normalise Windows separators, then keep only the final path component.
+    name = str(filename).replace("\\", "/").split("/")[-1]
+    name = name.replace("\x00", "").strip()
+    name = _SAFE_FILENAME_RE.sub("_", name)
+    name = name.lstrip(".")  # no hidden or relative names ("." / "..")
+    if not name:
+        name = "upload"
+    if len(name) > max_length:
+        root, ext = os.path.splitext(name)
+        ext = ext[:10]
+        name = root[: max_length - len(ext)] + ext
+    return name
+
+
+def build_original_filename(client_filename) -> str:
+    """uuid4-prefixed, sanitised filename — the prefix is retained (§1.3)."""
+    return f"{uuid.uuid4().hex}_{sanitize_filename(client_filename)}"
+
+
+# --- Coordinate judging (§2) ---
+
+def _opt_float(value, default=None):
+    """Coerce to a finite float, else return ``default``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(number) or math.isinf(number):
+        return default
+    return number
+
+
+def _dms_to_degrees(dms):
+    """EXIF (deg, min, sec) rationals -> decimal degrees, or ``None``."""
+    if dms is None:
+        return None
+    try:
+        parts = list(dms)
+    except TypeError:
+        return None
+    if len(parts) < 2:
+        return None
+    degrees = _opt_float(parts[0])
+    minutes = _opt_float(parts[1])
+    seconds = _opt_float(parts[2]) if len(parts) > 2 else 0.0
+    if degrees is None or minutes is None or seconds is None:
+        return None
+    return degrees + minutes / 60.0 + seconds / 3600.0
+
+
+def parse_gps(img) -> tuple[float, float] | None:
+    """Read GPS lat/lon from an image's EXIF, server-side (§2.2).
+
+    Returns ``(lat, lon)`` or ``None``. Values are range-validated; NaN/Inf and
+    out-of-range values are rejected as if the GPS were absent. Never reads a
+    multipart field — the stored original is the only trusted source.
+    """
+    from PIL import ExifTags
+    try:
+        exif = img.getexif()
+        if not exif:
+            return None
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo) or {}
+    except Exception:
+        return None
+    if not gps:
+        return None
+
+    lat = _dms_to_degrees(gps.get(2))
+    lon = _dms_to_degrees(gps.get(4))
+    if lat is None or lon is None:
+        return None
+
+    lat_ref = gps.get(1)
+    lon_ref = gps.get(3)
+    if isinstance(lat_ref, bytes):
+        lat_ref = lat_ref.decode("utf-8", errors="ignore")
+    if isinstance(lon_ref, bytes):
+        lon_ref = lon_ref.decode("utf-8", errors="ignore")
+    if lat_ref and str(lat_ref).strip().upper().startswith("S"):
+        lat = -lat
+    if lon_ref and str(lon_ref).strip().upper().startswith("W"):
+        lon = -lon
+
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return None
+    return lat, lon
+
+
+def haversine_m(lat1, lon1, lat2, lon2) -> float:
+    """Great-circle distance in metres — no geospatial dependency (§2.3)."""
+    earth_radius_m = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * earth_radius_m * math.asin(min(1.0, math.sqrt(a)))
+
+
+def score_proximity(item, coords):
+    """Map a coordinate to ``(location_status, proximity_points_awarded, distance_m)``.
+
+    Boundaries are inclusive: ``d == radius`` is a hit and
+    ``d == radius × near_multiplier`` is a near. See §2.3.
+    """
+    mode = item.proximity_mode or "bonus"
+    if item.target_lat is None or item.target_lon is None:
+        return ("no_target", 0, None)
+    if mode == "off":
+        return ("off", 0, None)
+    if coords is None:
+        return ("missing", 0, None)
+
+    lat, lon = coords
+    distance = haversine_m(lat, lon, item.target_lat, item.target_lon)
+    radius = item.radius_meters if item.radius_meters is not None else 100.0
+    near_multiplier = item.near_multiplier if item.near_multiplier is not None else 2.0
+    points = item.proximity_points or 0
+    if distance <= radius:
+        return ("hit", points, distance)
+    if distance <= radius * near_multiplier:
+        return ("near", points // 2, distance)
+    return ("far", 0, distance)
+
+
+def _location_note(status: str, proximity_points_awarded: int) -> str:
+    """Human-readable location sentence for the /result message (§2.4)."""
+    if status == "hit":
+        return f" Location: on target (+{proximity_points_awarded} proximity points)."
+    if status == "near":
+        return f" Location: near the target (+{proximity_points_awarded} proximity points)."
+    if status == "far":
+        return " Location: too far from the target for proximity points."
+    if status == "missing":
+        return " Location unavailable — no proximity points."
+    return ""
+
+
+# --- Login rate limiting (§3.3) ---
+
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_MAX_ATTEMPTS = 10
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _login_rate_limited(request: Request) -> bool:
+    """True when this client has exhausted its attempts in the window.
+
+    A simple in-memory fixed-window counter keyed by client IP. Counting
+    continues on success; logins are rare enough that this is acceptable.
+    """
+    now = time.monotonic()
+    ip = _client_ip(request)
+    attempts = _login_attempts.setdefault(ip, [])
+    cutoff = now - _LOGIN_WINDOW_SECONDS
+    attempts[:] = [t for t in attempts if t > cutoff]
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        return True
+    attempts.append(now)
+    return False
 
 
 # --- Auth Endpoints ---
@@ -223,6 +422,9 @@ async def load_hunts():
                     logger.warning(f"Skipping item '{item_data.get('name', '?')}' in '{data['name']}': missing required_properties")
                     skipped.append(item_data.get('name', '?'))
                     continue
+                proximity_mode = item_data.get('proximity_mode') or 'bonus'
+                if proximity_mode not in ('off', 'bonus', 'gate'):
+                    proximity_mode = 'bonus'
                 item = HuntItem(
                     hunt_id=hunt.id,
                     name=item_data['name'],
@@ -232,6 +434,16 @@ async def load_hunts():
                     required_properties=json.dumps(required),
                     bonus_properties=json.dumps(item_data.get('bonus_properties', [])),
                     bonus_hint=item_data.get('bonus_hint'),
+                    # Coordinate judging (§2.1) — optional; absent means no target.
+                    target_lat=_opt_float(item_data.get('target_lat')),
+                    target_lon=_opt_float(item_data.get('target_lon')),
+                    radius_meters=_opt_float(item_data.get('radius_meters'), 100.0),
+                    near_multiplier=_opt_float(item_data.get('near_multiplier'), 2.0),
+                    proximity_points=int(item_data.get('proximity_points') or 0),
+                    proximity_mode=proximity_mode,
+                    zone_lat=_opt_float(item_data.get('zone_lat')),
+                    zone_lon=_opt_float(item_data.get('zone_lon')),
+                    zone_radius_meters=_opt_float(item_data.get('zone_radius_meters')),
                 )
                 session.add(item)
             await session.commit()
@@ -246,10 +458,10 @@ async def load_teams():
         data = yaml.safe_load(f)
     async with async_session() as session:
         for team_data in data['teams']:
-            result = await session.execute(select(Team).where(Team.passphrase == team_data['passphrase']))
+            result = await session.execute(select(Team).where(Team.name == team_data['name']))
             if result.scalar():
                 continue
-            team = Team(name=team_data['name'], passphrase=team_data['passphrase'])
+            team = Team(name=team_data['name'], passphrase_hash=hash_passphrase(team_data['passphrase']))
             session.add(team)
         await session.commit()
     return {"message": "Teams loaded."}
@@ -279,18 +491,25 @@ async def admin_review_submission(sub_id: int):
     )
     all_bonus_met = all_required_met and len(review["missed_bonus"]) == 0 and len(bonus) > 0
     awarded_bonus = item.bonus_points if all_bonus_met else 0
-    points_awarded = item.points + awarded_bonus if all_required_met else 0
+    ai_points = item.points + awarded_bonus if all_required_met else 0
+    # Keep any proximity points already awarded; apply gate mode against the
+    # stored location status (§2.3).
+    proximity_points = sub.proximity_points_awarded or 0
+    points_awarded = ai_points + proximity_points
+    verified = all_required_met
+    if (item.proximity_mode or "bonus") == "gate":
+        verified = all_required_met and sub.location_status in ("hit", "near")
 
     async with async_session() as session:
         sub = (await session.execute(select(Submission).where(Submission.id == sub_id))).scalar_one()
         sub.ai_review_result = json.dumps(review)
         sub.ai_bonus_awarded = awarded_bonus
         sub.points_awarded = points_awarded
-        sub.verified = all_required_met
+        sub.verified = verified
         await session.commit()
 
     return {
-        "verified": all_required_met,
+        "verified": verified,
         "bonus_awarded": awarded_bonus,
         "points_awarded": points_awarded,
         "review": review,
@@ -301,20 +520,30 @@ async def admin_review_submission(sub_id: int):
 
 @app.post("/team/login")
 async def login(request: Request, passphrase: str = Form(...)):
+    if _login_rate_limited(request):
+        logger.warning(f"Login RATE-LIMITED for {_client_ip(request)}")
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait and try again.")
     async with async_session() as session:
-        result = await session.execute(select(Team).where(Team.passphrase == passphrase))
-        team = result.scalar()
-        if not team:
-            raise HTTPException(status_code=401, detail="Invalid passphrase")
-        request.session["team_id"] = team.id
-        return {"message": "Logged in!", "redirect": "/hunt/dashboard"}
+        teams = (await session.execute(select(Team))).scalars().all()
+    # Verify against every team so the check is constant-time per hash and does
+    # not leak which team matched (§3.2).
+    team = next((t for t in teams if verify_passphrase(passphrase, t.passphrase_hash)), None)
+    if not team:
+        raise HTTPException(status_code=401, detail="Invalid passphrase")
+    request.session["team_id"] = team.id
+    return {"message": "Logged in!", "redirect": "/hunt/dashboard"}
 
 
 @app.get("/hunt/dashboard")
 async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
     team_id = request.session.get("team_id")
     async with async_session() as session:
-        items_result = await session.execute(select(HuntItem))
+        # Scope items to the active hunt so a multi-hunt install does not mix
+        # item lists or inflate the maximum (§1.4).
+        items_query = select(HuntItem)
+        if _ACTIVE_HUNT_ID is not None:
+            items_query = items_query.where(HuntItem.hunt_id == _ACTIVE_HUNT_ID)
+        items_result = await session.execute(items_query)
         items = items_result.scalars().all()
 
         subs_result = await session.execute(
@@ -325,16 +554,28 @@ async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
         item_state = {}
         for sub in subs:
             state = item_state.setdefault(sub.item_id, {
-                "attempts": 0, "locked": False, "points_awarded": 0, "has_bonus": False
+                "attempts": 0, "locked": False, "points_awarded": 0, "has_bonus": False,
+                "proximity_points_awarded": 0, "location_status": None,
             })
             state["attempts"] += 1
             if sub.verified:
                 state["locked"] = True
                 state["points_awarded"] = sub.points_awarded
                 state["has_bonus"] = sub.ai_bonus_awarded > 0
+                state["proximity_points_awarded"] = sub.proximity_points_awarded or 0
+                state["location_status"] = sub.location_status
 
         total_points = sum(s["points_awarded"] for s in item_state.values() if s["locked"])
-        max_points = sum(item.points + item.bonus_points for item in items)
+        total_proximity = sum(s["proximity_points_awarded"] for s in item_state.values() if s["locked"])
+
+        def _item_max(item):
+            # Proximity is only reachable with a target and mode != "off" (§2.4).
+            proximity = 0
+            if (item.proximity_mode or "bonus") != "off" and item.target_lat is not None and item.target_lon is not None:
+                proximity = item.proximity_points or 0
+            return item.points + item.bonus_points + proximity
+
+        max_points = sum(_item_max(item) for item in items)
         progress = (total_points / max_points * 100) if max_points > 0 else 0
 
         return templates.TemplateResponse(
@@ -343,6 +584,8 @@ async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
                 items=items,
                 item_state=item_state,
                 total_points=total_points,
+                total_proximity=total_proximity,
+                max_points=max_points,
                 progress=progress,
                 max_attempts=MAX_ATTEMPTS_PER_ITEM,
                 team_id=team_id,
@@ -351,7 +594,7 @@ async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
 
 
 @app.get("/leaderboard")
-async def get_leaderboard(request: Request):
+async def get_leaderboard(request: Request, _: None = Depends(require_team)):
     async with async_session() as session:
         rank_result = await session.execute(
             select(Team.name, func.sum(Submission.points_awarded))
@@ -534,56 +777,92 @@ async def result_page(request: Request, status: str, message: str):
 
 # --- Submission Logic ---
 
+def _parse_exif_offset(offset_str):
+    """Parse an EXIF ``±HH:MM`` offset string into a timedelta, or ``None``."""
+    if isinstance(offset_str, bytes):
+        offset_str = offset_str.decode("utf-8", errors="ignore")
+    if not offset_str or not isinstance(offset_str, str):
+        return None
+    text = offset_str.strip()
+    if not text or text[0] not in "+-":
+        return None
+    sign = 1 if text[0] == "+" else -1
+    rest = text[1:]
+    try:
+        if ":" in rest:
+            hours_str, minutes_str = rest.split(":", 1)
+            hours, minutes = int(hours_str), int(minutes_str)
+        elif len(rest) >= 4:
+            hours, minutes = int(rest[:2]), int(rest[2:4])
+        elif len(rest) == 2:
+            hours, minutes = int(rest), 0
+        else:
+            return None
+    except (ValueError, IndexError):
+        return None
+    return timedelta(hours=hours, minutes=minutes) * sign
+
+
 def get_photo_taken_at(img: Image.Image) -> datetime.datetime | None:
-    """Extract DateTimeOriginal (36867) -> DateTimeDigitized (36868) -> DateTime (306)
-    If EXIF 2.31 OffsetTimeOriginal (0x9010) is present, convert to UTC and return
-    a timezone-aware datetime. Otherwise return a naive datetime (treated as
-    server local time by the caller). Returns None if no usable timestamp exists."""
+    """Extract the capture time in priority order.
+
+    ``DateTimeOriginal`` (36867) -> ``DateTimeDigitized`` (36868) -> IFD0
+    ``DateTime`` (306). The first two live in the **Exif sub-IFD**, not IFD0 —
+    Pillow's ``Exif.get()`` only consults IFD0, so they must be read via
+    ``get_ifd(ExifTags.IFD.Exif)``. Each tag's **own** offset is applied:
+    ``OffsetTimeOriginal`` (0x9010) only to DateTimeOriginal and
+    ``OffsetTimeDigitized`` (0x9011) only to DateTimeDigitized. A bare IFD0
+    ``DateTime`` has no offset tag.
+
+    Returns a timezone-aware UTC datetime when an offset applies, otherwise a
+    naive datetime (treated as server local time by the caller). Returns
+    ``None`` only when no timestamp tag exists at all.
+    """
     from PIL import ExifTags
-    exif = img.getexif()
+    try:
+        exif = img.getexif()
+    except Exception:
+        return None
     if not exif:
         return None
 
-    taken_at = None
-    for tag_id in (36867, 36868, 306):
-        val = exif.get(tag_id)
-        if val:
-            try:
-                taken_at = datetime.datetime.strptime(val, "%Y:%m:%d %H:%M:%S")
-                break
-            except (TypeError, ValueError):
-                continue
-    if taken_at is None:
-        return None
+    try:
+        sub_ifd = exif.get_ifd(ExifTags.IFD.Exif) or {}
+    except Exception:
+        sub_ifd = {}
 
-    exif_sub_ifd = exif.get_ifd(ExifTags.IFD.Exif) or {}
-    offset_str = exif_sub_ifd.get(0x9010)
-    if isinstance(offset_str, bytes):
-        offset_str = offset_str.decode('utf-8', errors='ignore')
-
-    if offset_str and isinstance(offset_str, str):
+    candidates = (
+        (sub_ifd.get(36867), sub_ifd.get(0x9010)),   # DateTimeOriginal + its offset
+        (sub_ifd.get(36868), sub_ifd.get(0x9011)),   # DateTimeDigitized + its offset
+        (exif.get(306), None),                        # IFD0 DateTime, no offset
+    )
+    for raw_value, offset_raw in candidates:
+        if not raw_value:
+            continue
+        if isinstance(raw_value, bytes):
+            raw_value = raw_value.decode("utf-8", errors="ignore")
         try:
-            sign = 1 if offset_str[0] == '+' else -1
-            rest = offset_str[1:]
-            if ':' in rest:
-                h_str, m_str = rest.split(':', 1)
-                h, m = int(h_str), int(m_str)
-            else:
-                h, m = int(rest[:2]), int(rest[2:]) if len(rest) >= 2 else 0
-            offset = timedelta(hours=h, minutes=m) * sign
+            taken_at = datetime.datetime.strptime(str(raw_value), "%Y:%m:%d %H:%M:%S")
+        except (TypeError, ValueError):
+            continue
+        offset = _parse_exif_offset(offset_raw)
+        if offset is not None:
             return (taken_at - offset).replace(tzinfo=timezone.utc)
-        except (ValueError, IndexError, AttributeError):
-            pass
-
-    return taken_at
+        return taken_at
+    return None
 
 
 def make_thumbnails(original_path: str, base_name: str) -> None:
-    """Generate thumb (200px) + display (1200px) JPEGs into the standard dirs."""
+    """Generate thumb (200px) + display (1200px) JPEGs into the standard dirs.
+
+    EXIF orientation is applied first so phone photos are not rendered
+    sideways (§1.2). Derived images have no EXIF, which is intentional.
+    """
     thumb_out  = os.path.join(THUMB_DIR,  f"{base_name}.jpg")
     display_out = os.path.join(DISPLAY_DIR, f"{base_name}.jpg")
 
     with Image.open(original_path) as img:
+        img = ImageOps.exif_transpose(img) or img
         if img.mode in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
 
@@ -597,7 +876,7 @@ def make_thumbnails(original_path: str, base_name: str) -> None:
 
 
 @app.post("/submit")
-async def submit_photo(request: Request, item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...), _: None = Depends(require_team)):
+async def submit_photo(request: Request, item_id: int = Form(...), team_id: int = Form(...), file: UploadFile = File(...), live_lat: str | None = Form(None), live_lon: str | None = Form(None), _: None = Depends(require_team)):
     session_team_id = request.session.get("team_id")
     if session_team_id != team_id:
         logger.warning(f"Submission REJECTED: posted team_id {team_id} does not match logged-in team {session_team_id}")
@@ -628,7 +907,7 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
             logger.warning(f"Submission REJECTED: Empty file from Team '{team_name}'")
             return {"message": "Empty file", "redirect": "/result?status=error&message=The uploaded file is empty."}
 
-        filename = f"{uuid.uuid4().hex}_{file.filename}"
+        filename = build_original_filename(file.filename)
         original_path = os.path.join(ORIGINALS_DIR, filename)
         base_name = os.path.splitext(filename)[0]
         thumb_path = os.path.join(THUMB_DIR, f"{base_name}.jpg")
@@ -643,8 +922,10 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
         try:
             with Image.open(original_path) as _img:
                 taken_at = get_photo_taken_at(_img)
+                coords = parse_gps(_img)
         except Exception:
             taken_at = None
+            coords = None
 
         if taken_at is None:
             _cleanup_files(original_path, thumb_path, display_path)
@@ -710,8 +991,33 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
         )
         all_bonus_met = all_required_met and len(review["missed_bonus"]) == 0 and len(bonus) > 0
         awarded_bonus = item.bonus_points if all_bonus_met else 0
-        points_awarded = item.points + awarded_bonus if all_required_met else 0
+        ai_points = item.points + awarded_bonus if all_required_met else 0
+
+        # §2.3 — proximity is added *beside* the AI points, never instead of them.
+        location_status, proximity_points_awarded, distance_m = score_proximity(item, coords)
+        points_awarded = ai_points + proximity_points_awarded
+
         is_locked = all_required_met
+        if (item.proximity_mode or "bonus") == "gate":
+            # gate mode: proximity also gates approval.
+            is_locked = all_required_met and location_status in ("hit", "near")
+
+        # §2.4 — a missing GPS is expected, never silent.
+        if location_status == "missing":
+            logger.info(f"Submission LOCATION UNAVAILABLE (no GPS in photo): Team '{team_name}' — "
+                        f"'{item_name}'. AI points {ai_points}, proximity points 0")
+        elif distance_m is not None:
+            logger.info(f"Submission LOCATION {location_status.upper()}: Team '{team_name}' — '{item_name}' "
+                        f"distance {distance_m:.1f}m, proximity points {proximity_points_awarded}")
+
+        # §2.5 — client-supplied live fix is untrusted display data. Stored only,
+        # never scored from, and never overrides the EXIF-derived value.
+        live_lat_value = _opt_float(live_lat)
+        live_lon_value = _opt_float(live_lon)
+        if live_lat_value is not None and not (-90.0 <= live_lat_value <= 90.0):
+            live_lat_value = None
+        if live_lon_value is not None and not (-180.0 <= live_lon_value <= 180.0):
+            live_lon_value = None
 
         async with async_session() as session:
             # Re-check right before insert: the AI call above opened a race window.
@@ -745,25 +1051,43 @@ async def submit_photo(request: Request, item_id: int = Form(...), team_id: int 
                 ai_bonus_awarded=awarded_bonus,
                 points_awarded=points_awarded,
                 attempt_number=attempt_number,
+                captured_at=taken_at,
+                gps_lat=coords[0] if coords else None,
+                gps_lon=coords[1] if coords else None,
+                distance_m=distance_m,
+                location_status=location_status,
+                proximity_points_awarded=proximity_points_awarded,
+                live_lat=live_lat_value,
+                live_lon=live_lon_value,
             )
             session.add(sub)
             await session.commit()
 
+        location_note = _location_note(location_status, proximity_points_awarded)
         if is_locked:
             bonus_text = f" (+{awarded_bonus} bonus for matching all bonus properties!)" if awarded_bonus > 0 else ""
             logger.info(f"Submission APPROVED: Team '{team_name}' verified '{item_name}' on attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM}. "
-                        f"Points: {points_awarded}. Reason: {review['reason']}")
+                        f"Points: {points_awarded} (AI {ai_points} + proximity {proximity_points_awarded}), "
+                        f"location {location_status}. Reason: {review['reason']}")
+            message = f"Verified! You earned {points_awarded} points{bonus_text}.{location_note}"
             return {
-                "message": f"Verified! You earned {points_awarded} points{bonus_text}",
-                "redirect": f"/result?status=success&message=Verified! You earned {points_awarded} points{bonus_text}"
+                "message": message,
+                "redirect": f"/result?status=success&message={message}"
             }
 
         logger.info(f"Submission REJECTED: Team '{team_name}' — '{item_name}' attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM}. "
-                    f"Reason: {review['reason']} | Confidence: {review['confidence']}")
+                    f"Reason: {review['reason']} | Confidence: {review['confidence']} | location {location_status}")
         reason = review.get("reason", "The photo doesn't appear to match the target item.")
+        if all_required_met and (item.proximity_mode or "bonus") == "gate":
+            reason = "You must be within the item's area to earn this one."
+        # §2.4: a missing GPS is stated in words even on rejection. Proximity
+        # points are not advertised here — the submission was not approved.
+        if location_status == "missing":
+            reason = f"{reason} Location unavailable — no proximity points."
+        message = f"Not approved: {reason}"
         return {
-            "message": f"Not approved: {reason}",
-            "redirect": f"/result?status=error&message=Not approved: {reason} (Attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM})"
+            "message": message,
+            "redirect": f"/result?status=error&message={message} (Attempt {attempt_number}/{MAX_ATTEMPTS_PER_ITEM})"
         }
 
     except Image.UnidentifiedImageError:

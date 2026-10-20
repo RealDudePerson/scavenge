@@ -15,6 +15,10 @@
                     <span id="progress-text">{{ "%.1f"|format(progress) }}%</span>
                 </div>
             </div>
+            <div style="font-size: 0.85rem; color: var(--color-muted); margin-top: 0.25rem;">
+                {{ total_points }} / {{ max_points }} points
+                {% if total_proximity %}<span style="color: var(--color-accent);">(incl. +{{ total_proximity }} proximity)</span>{% endif %}
+            </div>
         </div>
         <div class="cell small-12 medium-5 text-right">
             <div class="big-number" id="countdown-display" data-seconds-remaining="{{ hunt_state.seconds_remaining }}" style="font-family: 'Fredoka', sans-serif; font-size: 3rem; font-weight: 700; line-height: 1; color: var(--color-warning);">
@@ -66,12 +70,18 @@
                     <div style="font-size: 0.65rem; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 2px;">BONUS</div>
                 </div>
                 {% endif %}
+                {% if item.proximity_points and item.target_lat is not none and item.proximity_mode != 'off' %}
+                <div class="big-proximity" style="text-align: center; min-width: 80px; padding: 0.4rem 0.6rem; background: rgba(122,199,79,0.18); border-radius: 8px;">
+                    <div style="font-family: 'Fredoka', sans-serif; font-size: 1.5rem; font-weight: 700; color: var(--color-accent); line-height: 1;">+{{ item.proximity_points }}</div>
+                    <div style="font-size: 0.65rem; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-top: 2px;">LOCATION</div>
+                </div>
+                {% endif %}
             </div>
             <div class="card-section" style="padding: 1rem 1.25rem;">
                 {% if state.locked %}
                     <div class="status-badge" style="background: var(--color-success); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; text-align: center; font-weight: 600;">
                         <div style="font-size: 1.1rem;">Locked</div>
-                        <div style="font-size: 0.85rem; opacity: 0.95;">{{ state.points_awarded }} pts earned{% if state.has_bonus %} (incl. bonus){% endif %}</div>
+                        <div style="font-size: 0.85rem; opacity: 0.95;">{{ state.points_awarded }} pts earned{% if state.proximity_points_awarded %} (incl. +{{ state.proximity_points_awarded }} proximity){% endif %}{% if state.has_bonus %} (incl. bonus){% endif %}</div>
                     </div>
                 {% elif state.attempts >= max_attempts %}
                     <div class="status-badge" style="background: var(--color-warning); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; text-align: center; font-weight: 600;">
