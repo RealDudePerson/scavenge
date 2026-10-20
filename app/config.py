@@ -41,6 +41,20 @@ def get_openai_config():
     }
 
 
+DEFAULT_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+
+def get_tile_url() -> str:
+    """Base-map tile URL (phase 2 §4), configurable in ``admin_config.yaml``.
+
+    ``MAP_TILE_URL`` env var wins over ``map_tile_url`` in the YAML, which wins
+    over the OSM default. When tiles cannot load, the page falls back to a plain
+    background with a visible, non-blocking notice (see ``templates/map.html``).
+    """
+    cfg = _load_cfg()
+    return str(os.environ.get("MAP_TILE_URL") or cfg.get("map_tile_url") or DEFAULT_TILE_URL)
+
+
 def get_max_photo_age_hours() -> float:
     return float(_load_cfg().get("max_photo_age_hours", 4.0))
 

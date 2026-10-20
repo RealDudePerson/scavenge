@@ -57,6 +57,7 @@ def client(db_engine, session_factory, monkeypatch, tmp_path):
 
     # Reset module-level caches / limiters that would otherwise leak between tests.
     main._login_attempts.clear()
+    main._position_attempts.clear()
     main._ACTIVE_HUNT_ID = None
     main._ACTIVE_THEME = main.DEFAULT_THEME.copy()
 

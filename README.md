@@ -35,9 +35,11 @@ max_photo_age_hours: 8                # max age of EXIF timestamp on a submissio
 
 hunt_ends_at: ""                      # ISO timestamp; empty = hunt closed
 hunt_duration_minutes: 160            # default duration for "Start Hunt" button
+
+map_tile_url: ""                      # base-map tiles; empty = OSM default
 ```
 
-The `OPENAI_API_KEY` environment variable takes precedence over the YAML key if both are set.
+The `OPENAI_API_KEY` environment variable takes precedence over the YAML key if both are set. The `MAP_TILE_URL` environment variable likewise overrides `map_tile_url`.
 
 Set the `SESSION_SECRET` environment variable in production. If it is unset, the server generates a random key at startup and warns — which means every restart (including `--reload` code changes) logs all teams out.
 
@@ -169,6 +171,18 @@ Edit and restart if you need different values.
 
 The photo sent to the AI is downscaled to at most 1200px, so review cost and latency stay flat regardless of phone camera resolution. There is no built-in spend cap — point `openai_base_url` at a provider whose budget you control.
 
+## Map and live team positions
+
+The web map (phase 2) shows item geofences, the team's own live position, and submission pins. Admin sees every team and unapproved pins.
+
+- **Team page** `/map`; **admin page** `/admin/map-view` (the admin *API* is `/admin/map`). Both are behind auth.
+- **Team API** `GET /api/map` — one grouped payload (`items`, `me`, `submissions`). **Admin API** `GET /admin/map` — the same plus `teams`, each item's true target, and unapproved submissions.
+- **Never leaks the target.** The zone drawn on the map comes from `zone_lat`/`zone_lon`/`zone_radius_meters`, which may be offset from the true `target_lat`/`target_lon`. The team payload contains only the display zone; `target_lat`, `target_lon` and `radius_meters` are never sent to a team. An item with no `zone_*` is omitted from the team payload. This is enforced by `tests/test_map.py::test_team_map_leaks_no_true_target`.
+- **Live position** `POST /api/position` (form fields `lat`, `lon`, optional `accuracy_m`) records the team's current position. It is **display-only and never scored from**, is range-validated (NaN/Inf/non-numeric → 400), and is rate-limited to 60 requests/minute per IP. Only the latest row per team is kept (prior rows are pruned on insert), so the table never grows unbounded.
+- **Staleness.** Positions older than **60 seconds** are flagged `stale: true` (and dimmed in the UI). `age_seconds` is sent numerically so the client never parses timestamps.
+- **Map page behaviour.** Vendored **Leaflet 1.9.4** (`static/vendor/leaflet/`, no CDN at runtime), 10-second poll with a full rebuild each time, polling paused while the tab is hidden, and a fail-closed error state (markers cleared + visible message) on a failed poll.
+- **Offline tiles.** If tiles cannot load, the page still renders zones, markers and the legend on a plain background with a visible, non-blocking notice. Tiles come from `map_tile_url` / `MAP_TILE_URL` (default OSM). The fallback is verified in a real headless-Chrome test (`test_map_still_works_when_tiles_fail`); skip it with no browser present.
+
 ## Deployment notes
 
 ### Behind NGINX
@@ -206,6 +220,8 @@ There are no migrations. If you change a model in `app/models.py`, the database 
 |---|---|
 | `/admin/login` | Password login (cookie-based session) |
 | `/admin/dashboard` | Hunt timer controls, tool links |
+| `/admin/map-view` | Interactive map: all teams, true targets, unapproved pins |
+| `/admin/map` | GET; admin map JSON payload (behind admin auth) |
 | `/admin/load-hunts` | Read all `hunts/*.yaml` into the DB |
 | `/admin/load-teams` | Read `teams/teams.yaml` into the DB |
 | `/admin/hints` | View all bonus hints + private AI criteria |

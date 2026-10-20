@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_admin_view %}Admin{% else %}Team{% endif %} Map{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<style>
+    #map {
+        height: 70vh;
+        width: 100%;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+    }
+    #map.offline {
+        background: var(--color-surface);
+    }
+    #tile-fallback-notice {
+        display: none;
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background: var(--color-warning);
+        color: #fff;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        pointer-events: none;
+    }
+    #map-container {
+        position: relative;
+    }
+    #poll-error {
+        display: none;
+        padding: 1rem;
+        background: var(--color-warning);
+        color: #fff;
+        border-radius: 8px;
+        text-align: center;
+        margin-bottom: 1rem;
+        font-weight: 500;
+    }
+    .legend-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border: 1px solid rgba(0,0,0,0.1);
+        background: var(--color-surface);
+        user-select: none;
+    }
+    .legend-toggle:hover {
+        opacity: 0.8;
+    }
+    .legend-toggle .color-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .legend-toggle.hidden-layer {
+        opacity: 0.4;
+        text-decoration: line-through;
+    }
+    .legend-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .map-marker-icon {
+        font-size: 1.2rem;
+        line-height: 1;
+        text-align: center;
+    }
+    .leaflet-popup-content { font-size: 0.85rem; }
+    .leaflet-popup-content h4 { margin: 0 0 0.25rem 0; font-size: 1rem; }
+    .leaflet-popup-content p { margin: 0.15rem 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 1rem;">{% if is_admin_view %}Admin Map{% else %}Map{% endif %}</h1>
+
+<div id="map-container">
+    <div id="tile-fallback-notice">⚠️ Base map tiles unavailable — markers and zones still shown</div>
+    <div id="poll-error">⚠️ Failed to load map data — markers cleared</div>
+    <div id="map" class="offline"></div>
+</div>
+
+<div class="legend-container" id="legend"></div>
+
+<div style="font-size: 0.8rem; color: var(--color-muted); text-align: center; margin-top: 0.5rem;">
+    <span id="last-update">Updating…</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script>
+(function() {
+    'use strict';
+
+    const mapEl = document.getElementById('map');
+    const legendEl = document.getElementById('legend');
+    const pollErrorEl = document.getElementById('poll-error');
+    const fallbackNotice = document.getElementById('tile-fallback-notice');
+    const lastUpdateEl = document.getElementById('last-update');
+
+    // Poll interval and staleness threshold (must match the Python constant).
+    const POLL_MS = 10000;
+    const STALE_SECONDS = 60;
+
+    // Golden-angle colour index for entity groups.
+    const COLORS = [
+        '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+        '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4',
+        '#469990', '#dcbeff', '#9a6324', '#fffac8', '#800000',
+        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#a9a9a9',
+    ];
+    function colorFor(i) { return COLORS[i % COLORS.length]; }
+
+    // --- Map setup ---
+    // A transparent placeholder so a failed tile never renders a broken-image
+    // icon. Tiles failing is not fatal: zones and markers are SVG/DOM overlays
+    // that render on the map's plain background.
+    var TRANSPARENT_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    var tileLayer = L.tileLayer('{{ tile_url }}', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>',
+        errorTileUrl: TRANSPARENT_GIF,
+    });
+
+    var map = L.map('map', {
+        center: [34.0, -116.0],
+        zoom: 13,
+        layers: [tileLayer],
+    });
+    mapEl.classList.remove('offline');
+
+    // Detect tile load failure and show a visible, non-blocking notice. A real
+    // tile load is distinguished from the errorTileUrl placeholder: Leaflet
+    // fires 'tileload' for the placeholder too, so check the element's src.
+    var realTileLoaded = false;
+    function showTileNotice() {
+        fallbackNotice.style.display = 'block';
+        mapEl.classList.add('offline');
+    }
+    function hideTileNotice() {
+        fallbackNotice.style.display = 'none';
+        mapEl.classList.remove('offline');
+    }
+    tileLayer.on('tileload', function(e) {
+        var src = (e.tile && e.tile.src) || '';
+        if (src.indexOf('data:') === 0) return;  // error placeholder, not a real tile
+        realTileLoaded = true;
+        hideTileNotice();
+    });
+    tileLayer.on('tileerror', function() {
+        if (!realTileLoaded) showTileNotice();
+    });
+    // Leaflet also fires 'load' once every tile has settled (including errors);
+    // only treat it as success when a real tile actually loaded.
+    tileLayer.on('load', function() {
+        if (realTileLoaded) hideTileNotice();
+    });
+
+    // --- Layer groups ---
+    var itemLayer = L.layerGroup().addTo(map);
+    var positionLayer = L.layerGroup().addTo(map);
+    var submissionLayer = L.layerGroup().addTo(map);
+    var extraLayer = L.layerGroup().addTo(map);  // admin: other teams
+
+    // --- Legend toggles ---
+    // The full rebuild each poll recreates the layers, so hidden/visible state
+    // is remembered per entity key and reapplied.
+    var toggles = {};
+    var hiddenState = {};
+
+    function makeToggle(key, label, color, layer, visible) {
+        if (hiddenState[key]) visible = false;
+
+        var dot = document.createElement('span');
+        dot.className = 'color-dot';
+        dot.style.background = color;
+
+        var span = document.createElement('span');
+        span.textContent = label;
+
+        var div = document.createElement('div');
+        div.className = 'legend-toggle' + (visible ? '' : ' hidden-layer');
+        div.appendChild(dot);
+        div.appendChild(span);
+
+        div.addEventListener('click', function() {
+            var isHidden = div.classList.toggle('hidden-layer');
+            hiddenState[key] = isHidden;
+            if (isHidden) {
+                map.removeLayer(layer);
+            } else {
+                map.addLayer(layer);
+            }
+        });
+
+        if (!visible) {
+            map.removeLayer(layer);
+        }
+
+        legendEl.appendChild(div);
+        toggles[key] = { div: div, layer: layer, visible: visible };
+        return div;
+    }
+
+    // --- Build marker helpers ---
+    function teamIcon(color, label) {
+        return L.divIcon({
+            className: 'map-marker-icon',
+            html: '<div style="background:' + color + '; color:#fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + label.charAt(0).toUpperCase() + '</div>',
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -16],
+        });
+    }
+
+    function submissionIcon(status) {
+        var bg = '#888';
+        if (status === 'hit') bg = '#06A77D';
+        else if (status === 'near') bg = '#FEC868';
+        else if (status === 'far') bg = '#E63946';
+        else if (status === 'missing') bg = '#6C757D';
+        return L.divIcon({
+            className: 'map-marker-icon',
+            html: '<div style="background:' + bg + '; color:#fff; border-radius:4px; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:11px; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,0.3);">📷</div>',
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
+            popupAnchor: [0, -12],
+        });
+    }
+
+    function zoneCircle(center, radiusM, color, fillOpacity) {
+        return L.circle(center, {
+            radius: radiusM,
+            color: color,
+            fillColor: color,
+            fillOpacity: fillOpacity || 0.08,
+            weight: 2,
+            opacity: 0.6,
+        });
+    }
+
+    // --- Poll function ---
+    function poll() {
+        fetch('{{ map_api_url }}')
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.json();
+            })
+            .then(function(data) {
+                pollErrorEl.style.display = 'none';
+                legendEl.innerHTML = '';
+                itemLayer.clearLayers();
+                positionLayer.clearLayers();
+                submissionLayer.clearLayers();
+                extraLayer.clearLayers();
+
+                // Items (zones).
+                if (data.items) {
+                    data.items.forEach(function(item, i) {
+                        if (!item.zone) return;  // no display zone => nothing to draw
+                        var c = colorFor(i);
+                        var circle = zoneCircle([item.zone.lat, item.zone.lon], item.zone.radius_m, c);
+                        circle.bindPopup('<h4>' + item.name + '</h4><p>Points: ' + item.points + '</p>');
+                        itemLayer.addLayer(circle);
+                    });
+                    makeToggle('items', 'Zones (' + data.items.length + ')', colorFor(0), itemLayer, true);
+                }
+
+                // Own position.
+                if (data.me && data.me.lat !== null && data.me.lon !== null) {
+                    var m = data.me;
+                    var pos = [m.lat, m.lon];
+                    var isStale = m.stale;
+                    var bg = isStale ? '#6C757D' : '#4A90E2';
+                    var icon = teamIcon(bg, m.name);
+                    var marker = L.marker(pos, {icon: icon, opacity: isStale ? 0.45 : 1.0}).addTo(positionLayer);
+                    var popupHtml = '<h4>' + m.name + '</h4>' +
+                        '<p>📍 ' + m.lat.toFixed(5) + ', ' + m.lon.toFixed(5) + '</p>' +
+                        '<p>' + (isStale ? '⚠️ Stale (' + m.age_seconds + 's ago)' : '🟢 Live') + '</p>';
+                    if (m.accuracy_m !== null && m.accuracy_m !== undefined) {
+                        popupHtml += '<p>Accuracy: ±' + m.accuracy_m.toFixed(0) + 'm</p>';
+                    }
+                    marker.bindPopup(popupHtml);
+                    makeToggle('me', 'My Team', bg, positionLayer, true);
+                }
+
+                // Own submissions.
+                if (data.submissions) {
+                    data.submissions.forEach(function(sub, i) {
+                        var pos = [sub.lat, sub.lon];
+                        var icon = submissionIcon(sub.status);
+                        var marker = L.marker(pos, {icon: icon}).addTo(submissionLayer);
+                        marker.bindPopup(
+                            '<p>📷 Submission for item #' + sub.item_id + '</p>' +
+                            '<p>Status: ' + sub.status + '</p>' +
+                            '<p>' + sub.age_seconds + 's ago</p>'
+                        );
+                    });
+                    makeToggle('submissions', 'Submissions (' + data.submissions.length + ')', '#06A77D', submissionLayer, true);
+                }
+
+                // Admin extras: other teams.
+                if (data.teams) {
+                    data.teams.forEach(function(t, i) {
+                        if (t.position) {
+                            var pos = [t.position.lat, t.position.lon];
+                            var isStale = t.position.stale;
+                            var bg = isStale ? '#6C757D' : '#e6194b';
+                            var icon = teamIcon(bg, t.name);
+                            var marker = L.marker(pos, {icon: icon, opacity: isStale ? 0.45 : 1.0}).addTo(extraLayer);
+                            var popupHtml = '<h4>' + t.name + '</h4>' +
+                                '<p>📍 ' + t.position.lat.toFixed(5) + ', ' + t.position.lon.toFixed(5) + '</p>' +
+                                '<p>' + (isStale ? '⚠️ Stale (' + t.position.age_seconds + 's ago)' : '🟢 Live') + '</p>';
+                            if (t.position.accuracy_m !== null && t.position.accuracy_m !== undefined) {
+                                popupHtml += '<p>Accuracy: ±' + t.position.accuracy_m.toFixed(0) + 'm</p>';
+                            }
+                            marker.bindPopup(popupHtml);
+                        }
+                    });
+                    var teamCount = data.teams.filter(function(t) { return t.position; }).length;
+                    makeToggle('teams', 'Teams (' + teamCount + ')', '#e6194b', extraLayer, true);
+                }
+
+                lastUpdateEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+            })
+            .catch(function(err) {
+                // Fail closed: clear markers, show error message.
+                pollErrorEl.style.display = 'block';
+                itemLayer.clearLayers();
+                positionLayer.clearLayers();
+                submissionLayer.clearLayers();
+                extraLayer.clearLayers();
+                legendEl.innerHTML = '';
+                lastUpdateEl.textContent = 'Error: ' + err.message;
+            });
+    }
+
+    // --- Poll on an interval, pause when tab hidden ---
+    var pollTimer = setInterval(poll, POLL_MS);
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(pollTimer);
+        } else {
+            poll();  // immediate refresh on show
+            pollTimer = setInterval(poll, POLL_MS);
+        }
+    });
+
+    // --- Initial load ---
+    poll();
+})();
+</script>
+{% endblock %}

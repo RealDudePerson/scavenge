@@ -57,6 +57,8 @@ teams:
 ## Key Gotchas
 
 - **AI + coordinates** — the AI review is the approval gate; proximity is a separate, additive score (default mode `bonus`). Items may set `target_lat`/`target_lon`, `radius_meters` (default 100), `near_multiplier` (default 2.0), `proximity_points` (default 0), `proximity_mode` (`off|bonus|gate`, default `bonus`), plus `zone_lat`/`zone_lon`/`zone_radius_meters` for the (phase 2) map. GPS is read **server-side from the stored original** via `get_ifd(GPSInfo)` — never from a multipart field. `location_status` (`hit|near|far|missing|no_target|off`) is always persisted; missing GPS still earns AI points and is stated in the `/result` message, never silent. `gate` mode is the only mode where proximity can deny an otherwise-valid photo.
+- **The team map never leaks the true target (phase 2 §1)** — `GET /api/map` sends only the display zone (`zone_lat`/`zone_lon`/`zone_radius_meters`) and omits any item with no zone; `target_lat`/`target_lon`/`radius_meters` must never appear in its payload (a player would read them out of the JS and walk to the spot). `GET /admin/map` may include the true target. Enforced by `tests/test_map.py::test_team_map_leaks_no_true_target` (deep scan of every key and numeric value in the serialised payload).
+- **Map positions are display-only (phase 2 §2–4)** — `POST /api/position` stores the latest position per team (prior rows pruned on insert, so the table holds ≤1 row/team), is range-validated (NaN/Inf/non-numeric → 400) and rate-limited 60/min/IP, and is **never scored from**. Positions older than 60 s are marked `stale` (`_STALE_THRESHOLD_SECONDS`). Tiles come from `get_tile_url()` (`map_tile_url` in `admin_config.yaml`, `MAP_TILE_URL` env, OSM default); if tiles fail the page shows a non-blocking notice and keeps rendering markers/zones (vendored Leaflet 1.9.4). The admin map *page* is `/admin/map-view`; its API is `/admin/map`.
 - **`get_photo_taken_at` reads the Exif sub-IFD** — `DateTimeOriginal` → `DateTimeDigitized` → IFD0 `DateTime`, each with its **own** offset (`OffsetTimeOriginal` 0x9010 / `OffsetTimeDigitized` 0x9011). Pillow's `Exif.get()` only sees IFD0, so the sub-IFD read is mandatory. The result is persisted as `Submission.captured_at`.
 - **Team passphrases are hashed** (PBKDF2-HMAC-SHA256, `app/security.py`) — `load_teams` hashes on load and `/team/login` compares with `hmac.compare_digest`; the DB never stores plaintext. `POST /team/login` is rate-limited in-memory per client IP (10 / 5 min).
 - **Schema changes require `/admin/reset`** — adding a column to `models.py` doesn't migrate; it requires drop+recreate. Then `/admin/load-hunts` and `/admin/load-teams` to repopulate.
@@ -86,11 +88,15 @@ teams:
 
 **Public**: `/`, `/admin/login`, `/team/login`, `/logout`, `/result`, `/uploads/{originals,thumb,display}/...`, `/static` (none)
 
-**Team (auth: `team_id` in session)**: `/hunt/dashboard`, `/gallery`, `/leaderboard`
+**Team (auth: `team_id` in session)**: `/hunt/dashboard`, `/map`, `/gallery`, `/leaderboard`
 
-**Admin (auth: `is_admin=True` in session)**: `/admin/dashboard`, `/admin/hints`, `/admin/all-gallery`, all `POST /admin/*` endpoints
+**Admin (auth: `is_admin=True` in session)**: `/admin/dashboard`, `/admin/map-view`, `/admin/hints`, `/admin/all-gallery`, all `POST /admin/*` endpoints
 
 **Team (auth: `team_id` in session)**: `POST /submit` — requires a logged-in team and the posted `team_id` must match the session; gated by hunt state too
+
+**Team JSON (auth: `team_id` in session)**: `GET /api/map` (display zone only — never the true target), `POST /api/position` (display-only live position, rate-limited)
+
+**Admin JSON (auth: `is_admin=True`)**: `GET /admin/map` (includes every team, true targets, and unapproved submissions)
 
 ## Tuning Knobs (in `app/main.py:36-37`)
 

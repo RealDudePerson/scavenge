@@ -8,7 +8,7 @@ from starlette.staticfiles import StaticFiles
 from sqlalchemy.future import select
 from sqlalchemy import func
 from .database import async_session, init_db
-from .models import Hunt, HuntItem, Team, Submission, Base
+from .models import Hunt, HuntItem, Team, TeamPosition, Submission, Base
 from .config import HUNTS_DIR, TEAMS_DIR, ORIGINALS_DIR, THUMB_DIR, DISPLAY_DIR, get_admin_password, get_max_photo_age_hours, get_hunt_state, set_hunt_ends_at
 from .ai_review import review_image
 from .security import hash_passphrase, verify_passphrase
@@ -338,6 +338,29 @@ def _login_rate_limited(request: Request) -> bool:
     return False
 
 
+# --- Position rate limiting (§3) ---
+
+_POSITION_WINDOW_SECONDS = 60
+_POSITION_MAX_PER_WINDOW = 60  # 60 req/min per IP — generous for phone polling
+_position_attempts: dict[str, list[float]] = {}
+
+
+def _position_rate_limited(request: Request) -> bool:
+    """True when this client has exhausted its position-update limit."""
+    now = time.monotonic()
+    ip = _client_ip(request)
+    attempts = _position_attempts.setdefault(ip, [])
+    cutoff = now - _POSITION_WINDOW_SECONDS
+    attempts[:] = [t for t in attempts if t > cutoff]
+    if len(attempts) >= _POSITION_MAX_PER_WINDOW:
+        return True
+    attempts.append(now)
+    return False
+
+
+_STALE_THRESHOLD_SECONDS = 60  # positions older than this are marked stale
+
+
 # --- Auth Endpoints ---
 
 @app.get("/logout")
@@ -530,6 +553,259 @@ async def admin_review_submission(sub_id: int):
         "points_awarded": points_awarded,
         "review": review,
     }
+
+
+# --- Phase 2: Map API ---
+
+@app.post("/api/position")
+async def update_position(request: Request, _: None = Depends(require_team)):
+    """Record the team's live position for the map. Display only, never scored."""
+    team_id = request.session.get("team_id")
+
+    if _position_rate_limited(request):
+        logger.warning(f"Position RATE-LIMITED for {_client_ip(request)}")
+        raise HTTPException(status_code=429, detail="Too many position updates.")
+
+    # Read raw form data so we can validate empty strings ourselves.
+    form = await request.form()
+    lat_raw = form.get("lat")
+    lon_raw = form.get("lon")
+    accuracy_raw = form.get("accuracy_m")
+    source = form.get("source") or "app"
+
+    # Validate: must be non-empty, finite real numbers within range (§3).
+    if not lat_raw or not lon_raw:
+        raise HTTPException(status_code=400, detail="lat and lon must be non-empty.")
+    try:
+        lat_f = float(lat_raw)
+        lon_f = float(lon_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="lat and lon must be numeric.")
+    if math.isnan(lat_f) or math.isinf(lat_f) or math.isnan(lon_f) or math.isinf(lon_f):
+        raise HTTPException(status_code=400, detail="lat and lon must be finite.")
+    if not (-90.0 <= lat_f <= 90.0):
+        raise HTTPException(status_code=400, detail="lat out of range [-90, 90].")
+    if not (-180.0 <= lon_f <= 180.0):
+        raise HTTPException(status_code=400, detail="lon out of range [-180, 180].")
+
+    if accuracy_raw is not None and accuracy_raw.strip():
+        try:
+            acc = float(accuracy_raw)
+        except (TypeError, ValueError):
+            acc = None
+        if acc is not None and (math.isnan(acc) or math.isinf(acc)):
+            acc = None
+    else:
+        acc = None
+
+    now = datetime.datetime.now(timezone.utc)
+    async with async_session() as session:
+        # Prune old positions for this team: keep only the latest.
+        old_positions = await session.execute(
+            select(TeamPosition).where(TeamPosition.team_id == team_id)
+        )
+        for old in old_positions.scalars().all():
+            await session.delete(old)
+
+        pos = TeamPosition(
+            team_id=team_id,
+            lat=lat_f,
+            lon=lon_f,
+            accuracy_m=acc,
+            recorded_at=now,
+            source=source,
+        )
+        session.add(pos)
+        await session.commit()
+
+    return {"message": "Position updated."}
+
+
+@app.get("/api/map")
+async def team_map_data(request: Request, _: None = Depends(require_team)):
+    """Grouped payload for the team map — items (display zone only), own position, own submissions.
+
+    The true target is never included (§1). Items without zone_* are omitted entirely.
+    """
+    team_id = request.session.get("team_id")
+    now = datetime.datetime.now(timezone.utc)
+    async with async_session() as session:
+        # Items: only those with display zone data, no true target.
+        items_result = await session.execute(
+            select(HuntItem).where(
+                HuntItem.zone_lat.isnot(None),
+                HuntItem.zone_lon.isnot(None),
+            )
+        )
+        items = []
+        for item in items_result.scalars().all():
+            items.append({
+                "id": item.id,
+                "name": item.name,
+                "points": item.points,
+                "zone": {
+                    "lat": item.zone_lat,
+                    "lon": item.zone_lon,
+                    "radius_m": item.zone_radius_meters or 100.0,
+                },
+            })
+
+        # Own position.
+        pos_result = await session.execute(
+            select(TeamPosition).where(TeamPosition.team_id == team_id).order_by(TeamPosition.recorded_at.desc()).limit(1)
+        )
+        me = None
+        pos = pos_result.scalars().first()
+        if pos and pos.recorded_at:
+            # recorded_at is stored as naive UTC per model default.
+            pos_dt = pos.recorded_at.replace(tzinfo=timezone.utc) if pos.recorded_at.tzinfo is None else pos.recorded_at
+            age = (now - pos_dt).total_seconds()
+            me = {
+                "team_id": team_id,
+                "name": (await session.execute(select(Team).where(Team.id == team_id))).scalar_one().name,
+                "lat": pos.lat,
+                "lon": pos.lon,
+                "accuracy_m": pos.accuracy_m,
+                "age_seconds": int(age),
+                "stale": age > _STALE_THRESHOLD_SECONDS,
+            }
+
+        # Own submissions with GPS.
+        subs_result = await session.execute(
+            select(Submission).where(
+                Submission.team_id == team_id,
+                Submission.gps_lat.isnot(None),
+                Submission.gps_lon.isnot(None),
+            ).order_by(Submission.submitted_at.desc())
+        )
+        submissions = []
+        for sub in subs_result.scalars().all():
+            age = (now - sub.submitted_at.replace(tzinfo=timezone.utc) if sub.submitted_at.tzinfo is None else sub.submitted_at).total_seconds() if sub.submitted_at else 0
+            submissions.append({
+                "item_id": sub.item_id,
+                "lat": sub.gps_lat,
+                "lon": sub.gps_lon,
+                "status": sub.location_status,
+                "age_seconds": int(age),
+            })
+
+    return {"items": items, "me": me, "submissions": submissions}
+
+
+@app.get("/admin/map")
+async def admin_map_data(request: Request, _: None = Depends(require_admin)):
+    """Admin map payload — same shape as team map, plus all teams and true targets.
+    
+    Includes unapproved submissions.
+    """
+    now = datetime.datetime.now(timezone.utc)
+    async with async_session() as session:
+        # Items with true target.
+        items_result = await session.execute(
+            select(HuntItem).where(
+                HuntItem.zone_lat.isnot(None),
+                HuntItem.zone_lon.isnot(None),
+            )
+        )
+        items = []
+        for item in items_result.scalars().all():
+            items.append({
+                "id": item.id,
+                "name": item.name,
+                "points": item.points,
+                "zone": {
+                    "lat": item.zone_lat,
+                    "lon": item.zone_lon,
+                    "radius_m": item.zone_radius_meters or 100.0,
+                },
+                "target_lat": item.target_lat,
+                "target_lon": item.target_lon,
+                "radius_meters": item.radius_meters,
+                "proximity_points": item.proximity_points,
+                "proximity_mode": item.proximity_mode,
+            })
+
+        # All teams' latest positions.
+        teams_result = await session.execute(select(Team))
+        teams = []
+        for team in teams_result.scalars().all():
+            pos_result = await session.execute(
+                select(TeamPosition).where(TeamPosition.team_id == team.id).order_by(TeamPosition.recorded_at.desc()).limit(1)
+            )
+            pos = pos_result.scalars().first()
+            team_entry = {
+                "team_id": team.id,
+                "name": team.name,
+                "position": None,
+            }
+            if pos and pos.recorded_at:
+                # recorded_at is stored as naive UTC per model default.
+                pos_dt = pos.recorded_at.replace(tzinfo=timezone.utc) if pos.recorded_at.tzinfo is None else pos.recorded_at
+                age = (now - pos_dt).total_seconds()
+                team_entry["position"] = {
+                    "lat": pos.lat,
+                    "lon": pos.lon,
+                    "accuracy_m": pos.accuracy_m,
+                    "age_seconds": int(age),
+                    "stale": age > _STALE_THRESHOLD_SECONDS,
+                }
+            teams.append(team_entry)
+
+        # All submissions with GPS (including unapproved).
+        subs_result = await session.execute(
+            select(Submission).where(
+                Submission.gps_lat.isnot(None),
+                Submission.gps_lon.isnot(None),
+            ).order_by(Submission.submitted_at.desc())
+        )
+        submissions = []
+        for sub in subs_result.scalars().all():
+            age = 0
+            if sub.submitted_at:
+                sub_dt = sub.submitted_at.replace(tzinfo=timezone.utc) if sub.submitted_at.tzinfo is None else sub.submitted_at
+                age = (now - sub_dt).total_seconds()
+            submissions.append({
+                "submission_id": sub.id,
+                "item_id": sub.item_id,
+                "team_id": sub.team_id,
+                "lat": sub.gps_lat,
+                "lon": sub.gps_lon,
+                "status": sub.location_status,
+                "verified": sub.verified,
+                "age_seconds": int(age),
+            })
+
+    return {"items": items, "teams": teams, "submissions": submissions}
+
+
+# --- Map Pages ---
+
+@app.get("/map")
+async def team_map_page(request: Request, _: None = Depends(require_team)):
+    """Team-facing map page — HTML rendered with vendored Leaflet."""
+    from .config import get_tile_url
+    return templates.TemplateResponse(
+        request, "map.html", _ctx(
+            request,
+            tile_url=get_tile_url(),
+            map_api_url="/api/map",
+            is_admin_view=False,
+        )
+    )
+
+
+@app.get("/admin/map-view")
+async def admin_map_page(request: Request, _: None = Depends(require_admin)):
+    """Admin-facing map page — distinct path from the API route `/admin/map`."""
+    from .config import get_tile_url
+    return templates.TemplateResponse(
+        request, "map.html", _ctx(
+            request,
+            tile_url=get_tile_url(),
+            map_api_url="/admin/map",
+            is_admin_view=True,
+        )
+    )
 
 
 # --- Team Endpoints ---

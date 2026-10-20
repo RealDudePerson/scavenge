@@ -47,6 +47,25 @@ class Team(Base):
     passphrase_hash = Column(String, unique=True, nullable=False)
 
 
+class TeamPosition(Base):
+    """Live team position for the map — display only, never scored.
+    
+    Untrusted display data: it is never scored from and never used in judging
+    (§2.5). Only the latest position per team is kept — the POST handler prunes
+    prior rows for the team inside the same transaction, so the table holds at
+    most one row per team for the whole event (see ``POST /api/position``).
+    """
+
+    __tablename__ = "team_positions"
+    id = Column(Integer, primary_key=True)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    accuracy_m = Column(Float, nullable=True)
+    recorded_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None))
+    source = Column(String, default="app")
+
+
 class Submission(Base):
     __tablename__ = "submissions"
     id = Column(Integer, primary_key=True)
