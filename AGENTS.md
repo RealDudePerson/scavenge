@@ -68,7 +68,7 @@ teams:
 - **Set `SESSION_SECRET` in production** — unset falls back to a random per-process key, so every restart invalidates all sessions.
 - **EXIF timestamp is interpreted as UTC** if `OffsetTimeOriginal` (EXIF 2.31, tag 0x9010) is present, else treated as server local time. Photos with no EXIF timestamp are rejected.
 - **NGINX upload limit** — if serving behind NGINX, set `client_max_body_size 20M+` in the `http {}` block or you'll get `413 Request Entity Too Large` for phone photos.
-- **Three StaticFiles mounts** for uploads: `/uploads/originals`, `/uploads/thumb`, `/uploads/display`. Don't change to a single mount — the dirs map directly to URL paths.
+- **Two StaticFiles mounts** for uploads: `/uploads/thumb` and `/uploads/display`. Both are re-encoded (no EXIF) and map directly to URL paths — don't merge them into a single mount. `/uploads/originals` is deliberately **not** mounted: originals are the as-uploaded bytes and carry GPS EXIF, so they must stay off HTTP (see `tests/test_uploads_security.py`).
 - **`admin_config.yaml` is gitignored but lives on disk with the real OpenAI key** (`OPENAI_API_KEY` env var takes precedence over the YAML key). If you copy this repo to share, scrub the key or rotate it with the provider.
 - **Vendored front-end assets** live in `static/vendor/` (Foundation CSS/JS, jQuery) and are served from `/static` so the UI works with no cell signal. Google Fonts still loads from CDN and degrades to `system-ui` offline.
 
@@ -86,7 +86,7 @@ teams:
 
 ## Routing Map
 
-**Public**: `/`, `/admin/login`, `/team/login`, `/api/login` (JSON; needs the right passphrase), `/logout`, `/result`, `/uploads/{originals,thumb,display}/...`, `/static` (none)
+**Public**: `/`, `/admin/login`, `/team/login`, `/api/login` (JSON; needs the right passphrase), `/logout`, `/result`, `/uploads/{thumb,display}/...` (`originals` is deliberately not mounted), `/static` (none)
 
 **Team (auth: `team_id` in session)**: `/hunt/dashboard`, `/map`, `/gallery`, `/leaderboard`
 

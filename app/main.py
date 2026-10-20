@@ -45,7 +45,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=_SESSION_SECRET)
 templates = Jinja2Templates(directory="templates")
-app.mount("/uploads/originals", StaticFiles(directory="uploads/originals"), name="uploads-originals")
 app.mount("/uploads/thumb", StaticFiles(directory="uploads/thumb"), name="uploads-thumb")
 app.mount("/uploads/display", StaticFiles(directory="uploads/display"), name="uploads-display")
 app.mount("/static", StaticFiles(directory="static"), name="static")
