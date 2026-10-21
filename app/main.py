@@ -985,6 +985,21 @@ async def api_items(request: Request, _: None = Depends(require_team)):
     return [_serialize_item(item, item_state.get(item.id)) for item in items]
 
 
+@app.get("/api/hunt")
+async def api_hunt(request: Request, _: None = Depends(require_team)):
+    """Hunt open/closed state for the team client.
+
+    Returns exactly the dict :func:`get_hunt_state` produces, with ``ends_at``
+    normalised to an ISO 8601 string (or ``None``) so it is JSON-serialisable.
+    Team-authenticated and fail-closed, like the other ``/api/*`` routes.
+    """
+    state = dict(get_hunt_state())
+    ends_at = state.get("ends_at")
+    if isinstance(ends_at, datetime.datetime):
+        state["ends_at"] = ends_at.isoformat()
+    return state
+
+
 @app.get("/hunt/dashboard")
 async def hunt_dashboard(request: Request, _: None = Depends(require_team)):
     team_id = request.session.get("team_id")

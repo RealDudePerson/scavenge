@@ -1,0 +1,179 @@
+# Kauai Garden Isle Scavenger Hunt
+# Coordinates are real, geocoded from OpenStreetMap/Nominatim.
+# zone_* is the area DRAWN on the map, offset ~200m from the true target so
+# the exact spot is not given away. Judging uses target_* only.
+name: Kauai Garden Isle Scavenger Hunt
+description: Explore Kauai from Hanalei to Waimea — find the island's iconic sights and prove you were
+  there.
+theme:
+  primary: '#0E6BA8'
+  secondary: '#F26B4E'
+  accent: '#3E8E41'
+  background: '#FFF8EC'
+  surface: '#FFFFFF'
+  text: '#22333B'
+  text_muted: '#6C757D'
+  success: '#2E7D32'
+  warning: '#F2A65A'
+  info: '#2A9D8F'
+items:
+- name: Hanalei Pier
+  description: The historic pier at Hanalei Bay on Kauai's north shore — long wooden deck, mountains behind.
+  points: 50
+  bonus_points: 25
+  bonus_hint: Shoot along the pier rather than across it, and catch the mountains at the far end.
+  required_properties:
+  - shows a long wooden pier or jetty extending into the ocean
+  - taken outdoors with open water visible
+  bonus_properties:
+  - mountains or a bay shoreline are visible in the background
+  - the photograph is taken from on or near the pier itself
+  target_lat: 22.2126719
+  target_lon: -159.4975674
+  radius_meters: 120
+  near_multiplier: 2.0
+  proximity_points: 30
+  proximity_mode: bonus
+  zone_lat: 22.2139423
+  zone_lon: -159.4961952
+  zone_radius_meters: 450
+- name: Waimea Canyon
+  description: The 'Grand Canyon of the Pacific' — a vast red and green gorge carved into western Kauai.
+  points: 75
+  bonus_points: 50
+  bonus_hint: The official overlooks give the widest view; include some sky to show the scale.
+  required_properties:
+  - shows a large deep canyon or gorge with layered rock walls
+  - the landscape is visibly red or rust coloured
+  bonus_properties:
+  - the view is from a high overlook showing the canyon floor
+  - green vegetation is visible against the red rock
+  target_lat: 22.0707896
+  target_lon: -159.6649498
+  radius_meters: 200
+  near_multiplier: 2.0
+  proximity_points: 40
+  proximity_mode: bonus
+  zone_lat: 22.0695192
+  zone_lon: -159.6635789
+  zone_radius_meters: 450
+- name: Spouting Horn
+  description: A blowhole on the south shore near Poipu that fires seawater high into the air.
+  points: 100
+  bonus_points: 50
+  bonus_hint: Time it for the moment the water erupts — a burst mid-air is the shot.
+  required_properties:
+  - shows a water blowhole or geyser erupting from coastal rocks
+  - the scene is on a rocky shoreline
+  bonus_properties:
+  - water is caught mid-eruption in the air
+  - the ocean is visible behind the blowhole
+  target_lat: 21.8846953
+  target_lon: -159.4934406
+  radius_meters: 100
+  near_multiplier: 2.0
+  proximity_points: 50
+  proximity_mode: bonus
+  zone_lat: 21.8834249
+  zone_lon: -159.4948097
+  zone_radius_meters: 450
+- name: Wailua Falls
+  description: A double waterfall plunging about 80 feet beside the road north of Lihue.
+  points: 75
+  bonus_points: 25
+  bonus_hint: Rain the night before makes the flow heavier — frame it vertically.
+  required_properties:
+  - shows a tall waterfall falling into a pool
+  - the surrounding area is lush and green
+  bonus_properties:
+  - the waterfall is a double or twin drop
+  - the plunge pool is visible at the base
+  target_lat: 22.0346267
+  target_lon: -159.3785828
+  radius_meters: 120
+  near_multiplier: 2.0
+  proximity_points: 40
+  proximity_mode: bonus
+  zone_lat: 22.0364233
+  zone_lon: -159.3785828
+  zone_radius_meters: 450
+- name: Kilauea Lighthouse
+  description: A 1913 lighthouse on a wildlife refuge bluff, with seabirds wheeling offshore.
+  points: 100
+  bonus_points: 50
+  bonus_hint: The refuge overlook puts the lighthouse against the sea — watch for albatross or boobies.
+  required_properties:
+  - shows a lighthouse building or tower
+  - the setting is a coastal cliff or headland
+  bonus_properties:
+  - seabirds are visible in flight
+  - the ocean horizon is in the frame
+  target_lat: 22.22553
+  target_lon: -159.3976882
+  radius_meters: 150
+  near_multiplier: 2.0
+  proximity_points: 50
+  proximity_mode: bonus
+  zone_lat: 22.22553
+  zone_lon: -159.399629
+  zone_radius_meters: 450
+- name: Poipu Beach
+  description: A sheltered south-shore beach known for snorkelling and basking Hawaiian monk seals.
+  points: 50
+  bonus_points: 50
+  bonus_hint: Look for a monk seal roped off on the sand — photograph it from a respectful distance.
+  required_properties:
+  - shows a sandy beach with ocean water
+  - the scene is taken outdoors in daylight
+  bonus_properties:
+  - a Hawaiian monk seal is visible resting on the sand
+  - people are swimming or snorkelling in the water
+  target_lat: 21.8731696
+  target_lon: -159.4528746
+  radius_meters: 150
+  near_multiplier: 2.0
+  proximity_points: 30
+  proximity_mode: bonus
+  zone_lat: 21.8731696
+  zone_lon: -159.4509386
+  zone_radius_meters: 450
+- name: Hanapepe Swinging Bridge
+  description: A narrow swinging footbridge over the Hanapepe River in Kauai's art-town.
+  points: 75
+  bonus_points: 25
+  bonus_hint: Stand at one end and shoot down the length of the span to show the sag.
+  required_properties:
+  - shows a narrow suspension or swinging footbridge
+  - the bridge spans a river or waterway
+  bonus_properties:
+  - the bridge's sag or curve is clearly visible
+  - the town or buildings are visible beyond the bridge
+  target_lat: 21.9120882
+  target_lon: -159.5869073
+  radius_meters: 100
+  near_multiplier: 2.0
+  proximity_points: 40
+  proximity_mode: bonus
+  zone_lat: 21.9102916
+  zone_lon: -159.5869073
+  zone_radius_meters: 450
+- name: Kalalau Lookout
+  description: The Kokee overlook with the classic view down the Na Pali Coast's fluted green cliffs.
+  points: 100
+  bonus_points: 50
+  bonus_hint: Clouds roll in fast up here — wait for a break in the mist for the coastline.
+  required_properties:
+  - shows a dramatic coastline with steep green cliffs
+  - the view is from a high elevation looking down
+  bonus_properties:
+  - the ridged or fluted shape of the Na Pali cliffs is visible
+  - the ocean meets the base of the cliffs in the frame
+  target_lat: 22.1511199
+  target_lon: -159.6458545
+  radius_meters: 200
+  near_multiplier: 2.0
+  proximity_points: 50
+  proximity_mode: bonus
+  zone_lat: 22.1523903
+  zone_lon: -159.6472261
+  zone_radius_meters: 450

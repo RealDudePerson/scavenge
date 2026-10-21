@@ -1,5 +1,7 @@
 teams:
-  - name: "Team Alpha"
-    passphrase: "alpha_secret"
-  - name: "Team Beta"
-    passphrase: "beta_secret"
+- name: Gambinos
+  passphrase: gambinos
+- name: Navettas
+  passphrase: navettas
+- name: Jenkins
+  passphrase: jenkins
