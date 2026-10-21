@@ -9,7 +9,7 @@ from datetime import timezone
 
 import app.main as main
 from dbutil import fetch_submissions, seed_hunt
-from exif_helpers import build_jpeg
+from exif_helpers import build_jpeg, null_island_gps
 
 
 def _fresh_exif():
@@ -90,6 +90,35 @@ def test_missing_gps_still_awards_ai_points(client, session_factory, monkeypatch
     assert sub["gps_lat"] is None
     assert sub["distance_m"] is None
     assert sub["captured_at"] is not None
+
+
+def test_redaction_sentinel_gps_is_missing_and_still_awards_ai(
+    client, session_factory, monkeypatch
+):
+    """Android's all-zero redaction tags must read as missing, not Null Island."""
+    ids = seed_hunt(session_factory, target=TARGET, proximity_points=50, points=100)
+    _open_hunt(monkeypatch)
+    _login(client)
+
+    _, dt, off = _fresh_exif()
+    jpeg = build_jpeg(
+        datetime_original=dt, offset_original=off, gps_raw=null_island_gps()
+    ).getvalue()
+    response = _submit(client, ids["item_id"], ids["team_id"], jpeg)
+
+    assert response.status_code == 200
+    message = response.json()["message"]
+    assert message.startswith("Verified!")
+    assert "Location unavailable — no proximity points" in message
+
+    sub = fetch_submissions(session_factory)[0]
+    assert sub["verified"] is True
+    assert sub["points_awarded"] == 100          # AI points, no proximity
+    assert sub["proximity_points_awarded"] == 0
+    assert sub["location_status"] == "missing"
+    assert sub["gps_lat"] is None
+    assert sub["gps_lon"] is None
+    assert sub["distance_m"] is None
 
 
 def test_gps_hit_awards_ai_plus_proximity(client, session_factory, monkeypatch):

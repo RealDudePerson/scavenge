@@ -45,6 +45,7 @@ def build_jpeg(
     offset_original=None,
     offset_digitized=None,
     gps=None,
+    gps_raw=None,
     orientation=None,
     size=(60, 40),
     color="white",
@@ -52,7 +53,9 @@ def build_jpeg(
     """Build an in-memory JPEG with a camera-shaped EXIF block.
 
     ``gps`` is a ``(lat, lon)`` tuple in decimal degrees. ``orientation`` is an
-    EXIF orientation value (e.g. 6 = rotate 90° CW on display).
+    EXIF orientation value (e.g. 6 = rotate 90° CW on display). ``gps_raw``
+    overrides ``gps`` with a raw GPSInfo dict, for building malformed or
+    redacted GPS tags (see ``null_island_gps``).
     """
     exif = Image.Exif()
     if ifd0_datetime is not None:
@@ -72,7 +75,9 @@ def build_jpeg(
     if sub_ifd:
         exif[ExifTags.IFD.Exif] = sub_ifd
 
-    if gps is not None:
+    if gps_raw is not None:
+        exif[ExifTags.IFD.GPSInfo] = gps_raw
+    elif gps is not None:
         lat, lon = gps
         exif[ExifTags.IFD.GPSInfo] = {
             1: "N" if lat >= 0 else "S",
@@ -90,3 +95,20 @@ def build_jpeg(
 
 def utc(year, month, day, hour, minute, second=0):
     return datetime.datetime(year, month, day, hour, minute, second, tzinfo=datetime.timezone.utc)
+
+
+def null_island_gps(*, denominator=1):
+    """The GPS block Android writes when it redacts location.
+
+    ``MediaProvider`` returns tags that are present but all-zero for an app
+    without ``ACCESS_MEDIA_LOCATION``. ``denominator=1`` reproduces the stored
+    signature (``0/1`` -> ``0.0``); ``denominator=0`` reproduces the ``0/0``
+    -> ``NaN`` variant a malformed writer may emit.
+    """
+    zero = _rat(0, denominator)
+    return {
+        1: "N",
+        2: (zero, zero, zero),
+        3: "E",
+        4: (zero, zero, zero),
+    }

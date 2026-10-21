@@ -207,8 +207,13 @@ def parse_gps(img) -> tuple[float, float] | None:
     """Read GPS lat/lon from an image's EXIF, server-side (§2.2).
 
     Returns ``(lat, lon)`` or ``None``. Values are range-validated; NaN/Inf and
-    out-of-range values are rejected as if the GPS were absent. Never reads a
-    multipart field — the stored original is the only trusted source.
+    out-of-range values are rejected as if the GPS were absent. An exactly-zero
+    pair ``(0.0, 0.0)`` — Null Island, open ocean — is the redaction signature
+    Android's ``MediaProvider`` writes for apps without ``ACCESS_MEDIA_LOCATION``,
+    and is likewise treated as absent. Only *both* components zero is the
+    sentinel: a genuine fix on the equator (``0.0, -116.5``) or prime meridian
+    (``34.1, 0.0``) still parses. Never reads a multipart field — the stored
+    original is the only trusted source.
     """
     from PIL import ExifTags
     try:
@@ -239,6 +244,15 @@ def parse_gps(img) -> tuple[float, float] | None:
 
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
         return None
+
+    # §2.2 (null-island) — an exactly-zero pair is the Android redaction
+    # signature, not a fix: return None so downstream reports "missing" rather
+    # than a false Gulf-of-Guinea distance. Both components must be zero; a
+    # coordinate merely *containing* a zero is a real location and still parses.
+    if lat == 0.0 and lon == 0.0:
+        logger.info("GPS null-island sentinel (0.0, 0.0) in EXIF — treating location as absent")
+        return None
+
     return lat, lon
 
 
